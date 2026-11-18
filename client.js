@@ -53,7 +53,7 @@ window.__ModuleLoader__.load({
       showArchived: '展示已归档的会话',
       emptyArchived: '没有已归档的会话。',
       archivedBadge: '已归档',
-      archivedOpenHint: '已归档：点击会取消归档并打开',
+      archivedOpenHint: '已归档：右键选择「取消归档」可打开',
       archivedOpened: '已取消归档并打开会话',
       archivedNotOpenable: '无法取消归档，请在右键菜单中操作',
       pinSession: '置顶会话',
@@ -84,7 +84,7 @@ window.__ModuleLoader__.load({
       showArchived: 'Show archived sessions',
       emptyArchived: 'No archived sessions.',
       archivedBadge: 'Archived',
-      archivedOpenHint: 'Archived: clicking unarchives and opens it',
+      archivedOpenHint: 'Archived: use 取消归档 in the context menu to open it',
       archivedOpened: 'Unarchived and opened the session',
       archivedNotOpenable: 'Could not unarchive; use the context menu',
       pinSession: 'Pin session',
@@ -796,38 +796,26 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The Host closes the main view of an archived Session (its Workspace
-     * browser refuses archived rows, and ui-workspace clears an archived
-     * current selection), which would leave a blank conversation. Opening an
-     * archived row therefore unarchives it first, then reveals the Session.
+     * Reveal a Session right after it was unarchived from the panel's context
+     * menu: the Host clears the main view of an archived Session, so opening
+     * must wait until the archive snapshot no longer lists it.
      */
-    function openArchivedSession(ctx, sessionId, t) {
-      const workspaces = ctx.workspaces
-      if (!workspaces || typeof workspaces.unarchiveSession !== 'function') {
-        notifyPanel(ctx, t('archivedNotOpenable'), false)
-        return
-      }
-      Promise.resolve()
-        .then(function () {
-          return workspaces.unarchiveSession(sessionId)
-        })
-        .then(function () {
-          return waitUntilUnarchived(ctx, sessionId, 2000)
-        })
-        .then(function (unarchived) {
-          if (!unarchived) {
-            notifyPanel(ctx, t('archivedNotOpenable'), false)
-            return
-          }
+    function revealUnarchivedSession(ctx, sessionId, t) {
+      return waitUntilUnarchived(ctx, sessionId, 2000).then(function (unarchived) {
+        if (!unarchived) {
+          notifyPanel(ctx, t('archivedNotOpenable'), false)
+          return
+        }
+        try {
           const workspace = ctx.uiWorkspace
           if (workspace && typeof workspace.openSession === 'function') workspace.openSession(sessionId)
           openTabInSession(ctx, sessionId)
           notifyPanel(ctx, t('archivedOpened'), true)
-        })
-        .catch(function (error) {
-          console.warn('[dsh-session-history] unarchive failed', error)
+        } catch (error) {
+          console.warn('[dsh-session-history] open unarchived session failed', error)
           notifyPanel(ctx, t('archivedNotOpenable'), false)
-        })
+        }
+      })
     }
 
     /**
@@ -1086,10 +1074,10 @@ window.__ModuleLoader__.load({
         const openSession = React.useCallback(
           function (id) {
             if (!id || id === sessionId) return
-            if (archivedIdList(ctx).indexOf(id) !== -1) {
-              openArchivedSession(ctx, id, t)
-              return
-            }
+            // Archived Sessions are not openable in place: the Host clears the
+            // main view of an archived Session, so a plain click does nothing.
+            // Right-click → 取消归档 unarchives and opens it instead.
+            if (archivedIdList(ctx).indexOf(id) !== -1) return
             try {
               const workspace = ctx.uiWorkspace
               if (workspace && typeof workspace.openSession === 'function') workspace.openSession(id)
@@ -1098,7 +1086,7 @@ window.__ModuleLoader__.load({
               console.warn('[dsh-session-history] open session failed', error)
             }
           },
-          [sessionId, t],
+          [sessionId],
         )
 
         const changeFilter = React.useCallback(function (value) {
@@ -1616,6 +1604,45 @@ window.__ModuleLoader__.load({
             }
           },
           'dsh-session-history: local pins',
+        )
+
+        /**
+         * The shared session menu's 取消归档 action calls this endpoint. When
+         * the menu was opened from the panel, keep the click and additionally
+         * reveal the Session once the unarchive has landed.
+         */
+        ctx.effect(
+          function () {
+            const service = ctx.workspaces || (typeof ctx.get === 'function' ? ctx.get('workspaces') : undefined)
+            if (!service || typeof service.unarchiveSession !== 'function') return function () {}
+            const original = service.unarchiveSession
+            if (original && original.__dshSessionHistoryWrapped) return function () {}
+            const wrapped = function (sessionId) {
+              const fromPanel = isPanelMenuTarget(sessionId)
+              if (!fromPanel) return original.apply(service, arguments)
+              return Promise.resolve()
+                .then(function () {
+                  return original.call(service, sessionId)
+                })
+                .then(function (value) {
+                  panelMenuSessionId = null
+                  revealUnarchivedSession(ctx, sessionId, t).catch(function (error) {
+                    console.warn('[dsh-session-history] reveal unarchived session failed', error)
+                  })
+                  return value
+                })
+                .catch(function (error) {
+                  notifyPanel(ctx, t('archivedNotOpenable'), false)
+                  throw error
+                })
+            }
+            wrapped.__dshSessionHistoryWrapped = true
+            service.unarchiveSession = wrapped
+            return function () {
+              if (service.unarchiveSession === wrapped) service.unarchiveSession = original
+            }
+          },
+          'dsh-session-history: archived open',
         )
 
         ctx.effect(
