@@ -12,6 +12,7 @@
 - **运行 / 完成提醒**：与左侧工作区一致，正在输出的会话显示蓝色圆点，AI 输出完成但还没查看的会话显示绿色圆点并把标题显示为黄色，提醒你这条会话有新的完成结果。
 - **自动记录分支**：在任意会话（主会话或分支会话）中点击「在新对话中分支」时，插件会记录父子关系（`childId`、`parentId`、分叉点 `atSeq`、时间）。记录保存在 `localStorage` 的 `dsh.session-history.branches.v1`。
 - **删除同步**：会话被删除后，它会从「展示分支」列表中消失；对应的分支记录也会在会话列表就绪后被自动清理。
+- **历史分支推断**：插件安装前产生的分支，DSH 普通分支并不会持久化父会话（`parentSession` 只写给子代理会话），所以没有可直接复用的记录。插件会做两种尽力而为的还原：优先使用 Host 仍在返回的 `parentSessionId`；否则如果会话标题符合 DSH 的分支命名 `<父标题> (n)`，就把它挂到标题为父标题的现存会话下。推断出来的关系会标注「（推断）」，标题被改过或父会话已删除时可能推断不到。
 
 ## 使用
 
@@ -26,6 +27,7 @@
 - 历史记录来自 Host 的 `turnOutline` 投影（由 `@deepseek-ai/dsh-session-turn-outline` 提供），无需在客户端折叠事件。
 - 分支关系在客户端包装 `ctx.sessions.fork` 记录；DSH 的普通 fork 不持久化父会话信息，因此只能在这一层记录。
 - 「展示分支」的置顶是面板本地状态：打开菜单时记录来源会话，随后临时屏蔽 `ctx.remoteAccess.source` 里 `workspace/pinSession`、`workspace/unpinSession` 两个端点的数据（让内置的「置顶会话」项不出现），并注册本插件的 `session.historyPin` 菜单项写入本地置顶；`ctx.workspaces.pinSession/unpinSession` 也做了同样的兜底重定向，左侧工作区不受影响。
+- 历史分支推断在 `buildBranchRows` 里完成：没有本地分支记录的会话先看 `summary.parentSessionId`（Host 有时仍会返回），再按标题正则 `/^(.+?)\s*[\(（]\d+[\)）]$/` 推导父标题并匹配现存会话；推断的父子关系在下钻时带环检测，根节点顺序仍按置顶/拖拽顺序/`updatedAt` 排序。
 - 拖动顺序通过 HTML5 拖拽实现，落位后把当前展示顺序写回 `dsh.session-history.order.v1`；拖动时的蓝色插入线用 `::before` / `::after` 绘制，颜色取主题变量 `--dsw-alias-state-business-primary`，按指针落在行的上半/下半决定插入在目标行之前还是之后。
 - 运行 / 完成状态来自 `ctx.uiSession.sessionStatus`（`completionUnread` / `running`）：完成的标题使用 `--dsw-alias-state-warn-label`，圆点分别使用活动蓝与完成绿，与左侧工作区的状态语言保持一致。
 

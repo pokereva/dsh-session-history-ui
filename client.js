@@ -48,6 +48,7 @@ window.__ModuleLoader__.load({
       untitled: '未命名会话',
       noText: '（无文本）',
       forkedFrom: '分支自',
+      inferredSuffix: '（推断）',
       pinSession: '置顶会话',
       unpinSession: '取消置顶',
       pinnedBadge: '置顶',
@@ -72,6 +73,7 @@ window.__ModuleLoader__.load({
       untitled: 'Untitled session',
       noText: '(no text)',
       forkedFrom: 'Forked from',
+      inferredSuffix: ' (inferred)',
       pinSession: 'Pin session',
       unpinSession: 'Unpin session',
       pinnedBadge: 'Pinned',
@@ -745,18 +747,63 @@ window.__ModuleLoader__.load({
         return updatedAt(b) - updatedAt(a)
       }
       const parentOf = new Map()
+      const inferredOf = new Set()
       const childrenByParent = new Map()
-      for (const record of records || []) {
-        if (!record || !live.has(record.childId) || !live.has(record.parentId)) continue
-        if (parentOf.has(record.childId)) continue
-        parentOf.set(record.childId, record.parentId)
-        let bucket = childrenByParent.get(record.parentId)
+      const link = function (childId, parentId, inferred) {
+        if (!live.has(childId) || !live.has(parentId) || childId === parentId) return
+        if (parentOf.has(childId)) return
+        parentOf.set(childId, parentId)
+        if (inferred) inferredOf.add(childId)
+        let bucket = childrenByParent.get(parentId)
         if (!bucket) {
           bucket = []
-          childrenByParent.set(record.parentId, bucket)
+          childrenByParent.set(parentId, bucket)
         }
-        bucket.push(record.childId)
+        bucket.push(childId)
       }
+      for (const record of records || []) {
+        if (!record) continue
+        link(record.childId, record.parentId, false)
+      }
+
+      /**
+       * Sessions forked before this plugin was installed carry no durable
+       * parent link. Two best-effort fallbacks recover most of them:
+       *  1. the Host still exposes the historical `parentSessionId` header
+       *     value for some sessions;
+       *  2. DSH names a fork "<base title> (n)", so an unlinked session whose
+       *     title ends with a numeric suffix nests under the live session that
+       *     still carries the base title.
+       */
+      const inferParent = function (childId) {
+        const summary = byId[childId]
+        if (!summary) return null
+        if (summary.parentSessionId && summary.parentSessionId !== childId && live.has(summary.parentSessionId)) {
+          return { parentId: summary.parentSessionId, inferred: false }
+        }
+        const title = typeof summary.title === 'string' ? summary.title.trim() : ''
+        const match = /^(.+?)\s*[\(（]\d+[\)）]$/u.exec(title)
+        if (!match) return null
+        const base = match[1].trim()
+        if (!base) return null
+        let best = null
+        for (const candidateId of live) {
+          if (candidateId === childId) continue
+          const candidate = byId[candidateId]
+          if (!candidate || typeof candidate.title !== 'string') continue
+          if (candidate.title.trim() !== base) continue
+          if (best === null || ((candidate.updatedAt || 0) > ((byId[best] && byId[best].updatedAt) || 0))) best = candidateId
+        }
+        return best === null ? null : { parentId: best, inferred: true }
+      }
+      for (const id of live) {
+        if (parentOf.has(id)) continue
+        const found = inferParent(id)
+        if (!found) continue
+        if (parentOf.get(found.parentId) === id) continue
+        link(id, found.parentId, found.inferred)
+      }
+
       for (const bucket of childrenByParent.values()) {
         bucket.sort(compareRows)
       }
@@ -770,7 +817,7 @@ window.__ModuleLoader__.load({
       const walk = function (id, depth) {
         if (visited.has(id)) return
         visited.add(id)
-        rows.push({ sessionId: id, depth: depth, parentId: parentOf.get(id) })
+        rows.push({ sessionId: id, depth: depth, parentId: parentOf.get(id), inferred: inferredOf.has(id) })
         for (const childId of childrenByParent.get(id) || []) walk(childId, depth + 1)
       }
       for (const root of roots) walk(root, 0)
@@ -1076,7 +1123,9 @@ window.__ModuleLoader__.load({
                 'data-current': row.sessionId === sessionId ? 'true' : undefined,
                 draggable: true,
                 style: { paddingLeft: 8 + row.depth * 14 + 'px' },
-                title: parentTitle ? t('forkedFrom') + ' ' + parentTitle : title,
+                title: parentTitle
+                  ? t('forkedFrom') + ' ' + parentTitle + (row.inferred ? t('inferredSuffix') : '')
+                  : title,
                 onDragStart: function (event) {
                   startDrag(event, row)
                 },
@@ -1125,7 +1174,13 @@ window.__ModuleLoader__.load({
                 pinned ? h('span', { className: 'dsh-sh-badge' }, t('pinnedBadge')) : null,
                 row.sessionId === sessionId ? h('span', { className: 'dsh-sh-badge' }, t('current')) : null,
               ),
-              row.depth > 0 && parentTitle ? h('span', { className: 'dsh-sh-parent' }, t('forkedFrom') + ' ' + parentTitle) : null,
+              row.depth > 0 && parentTitle
+                ? h(
+                    'span',
+                    { className: 'dsh-sh-parent' },
+                    t('forkedFrom') + ' ' + parentTitle + (row.inferred ? t('inferredSuffix') : ''),
+                  )
+                : null,
             )
           })
 
