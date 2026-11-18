@@ -1,8 +1,7 @@
 {
-  "name": "@local/dsh-session-history",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Session history and branch overview in the right sidebar: browse this conversation's turns, jump the chat to any turn, and see every conversation with its forked branches.",
+  "name": "dsh-session-history-ui",
+  "version": "1.0.0",
+  "description": "Right-sidebar session history and branch browser for DeepSeek Harness: browse this conversation's turns, jump the chat to any turn, filter user messages, and see every conversation with its forked branches.",
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -22,6 +21,16 @@
   "scripts": {
     "check": "node --check client.js && node --check index.js"
   },
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "deepseek-harness",
+    "session-history",
+    "branches",
+    "sidebar",
+    "chat-ui"
+  ],
+  "author": "pokereva",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -47,7 +56,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/pokereva/dsh-session-history.git"
+    "url": "git+https://github.com/pokereva/dsh-session-history.git"
   },
-  "homepage": "https://github.com/pokereva/dsh-session-history"
+  "homepage": "https://github.com/pokereva/dsh-session-history",
+  "bugs": {
+    "url": "https://github.com/pokereva/dsh-session-history/issues"
+  }
 }

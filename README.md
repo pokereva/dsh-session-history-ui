@@ -1,4 +1,4 @@
-# 会话历史与分支（@local/dsh-session-history）
+# 会话历史与分支（dsh-session-history-ui）
 
 在 DeepSeek Harness 右侧栏里查看当前会话的聊天记录、一键跳转，并浏览所有会话之间的分支关系。
 
@@ -38,10 +38,20 @@
 - 「上一个会话」的兜底订阅了 `ctx.sessions.list`：从 `retainedBy.mainView` 读出当前主视图会话，维护最近 20 个主视图会话栈；当主视图会话被归档、主视图被清空时，从栈里取最近一个仍然存在且未归档的会话 `openSession` 打开。除了归档场景外不会触发，正常的会话切换不受影响。
 - 历史记录的自动滚底用一个 ref 记录是否「贴底」（距离底部小于 24px），在投影轮次数、过滤条件或会话变化后，如果仍然贴底就把 `scrollTop` 设到 `scrollHeight`；用户主动上翻后不再自动跟随。
 
+## 安装
+
+从 npm 安装（推荐）：
+
+```bash
+dsh plugin add dsh-session-history-ui
+```
+
+或在 DSH 的「插件」页里选择「添加插件」，填入包名 `dsh-session-history-ui`、本仓库地址，或本地目录路径。安装后重启 / 刷新 DSH，右侧栏的「更多工具」里会出现「会话历史」入口。
+
 ## 开发
 
 ```bash
 npm run check   # node --check client.js && node --check index.js
 ```
 
-安装：在该目录上使用 DSH 的插件安装流程（bundle patch 会注入 `dsh-session-history`）。
+本地调试安装：在 DSH 的「插件」页里对本仓库目录使用插件安装流程（bundle patch 会以 `dsh-session-history-ui` 注入 `dsh-session-history`）。
