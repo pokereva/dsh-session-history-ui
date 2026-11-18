@@ -44,5 +44,10 @@
     "manifestVersion": 1
   },
   "icon": "./icon.svg",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/pokereva/dsh-session-history.git"
+  },
+  "homepage": "https://github.com/pokereva/dsh-session-history"
 }
