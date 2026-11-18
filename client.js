@@ -53,6 +53,9 @@ window.__ModuleLoader__.load({
       showArchived: '展示已归档的会话',
       emptyArchived: '没有已归档的会话。',
       archivedBadge: '已归档',
+      archivedOpenHint: '已归档：点击会取消归档并打开',
+      archivedOpened: '已取消归档并打开会话',
+      archivedNotOpenable: '无法取消归档，请在右键菜单中操作',
       pinSession: '置顶会话',
       unpinSession: '取消置顶',
       pinnedBadge: '置顶',
@@ -81,6 +84,9 @@ window.__ModuleLoader__.load({
       showArchived: 'Show archived sessions',
       emptyArchived: 'No archived sessions.',
       archivedBadge: 'Archived',
+      archivedOpenHint: 'Archived: clicking unarchives and opens it',
+      archivedOpened: 'Unarchived and opened the session',
+      archivedNotOpenable: 'Could not unarchive; use the context menu',
       pinSession: 'Pin session',
       unpinSession: 'Unpin session',
       pinnedBadge: 'Pinned',
@@ -742,6 +748,88 @@ window.__ModuleLoader__.load({
       window.setTimeout(tick, 0)
     }
 
+    function archivedIdList(ctx) {
+      try {
+        const workspaces = ctx.workspaces
+        const list = workspaces && workspaces.list
+        const snapshot = list && typeof list.getSnapshot === 'function' ? list.getSnapshot() : undefined
+        return snapshot && Array.isArray(snapshot.archivedSessionIds) ? snapshot.archivedSessionIds : EMPTY_ARCHIVED
+      } catch (error) {
+        return EMPTY_ARCHIVED
+      }
+    }
+
+    function isSessionArchived(ctx, sessionId) {
+      try {
+        return archivedIdList(ctx).indexOf(sessionId) !== -1
+      } catch (error) {
+        return false
+      }
+    }
+
+    function notifyPanel(ctx, text, success) {
+      try {
+        const menus = ctx.contextMenus
+        if (menus && typeof menus.notify === 'function') menus.notify(text, success)
+      } catch (error) {
+        /* notices are best effort */
+      }
+    }
+
+    /** Resolves once the Host archive snapshot stops listing the Session. */
+    function waitUntilUnarchived(ctx, sessionId, timeoutMs) {
+      const deadline = Date.now() + (timeoutMs || 2000)
+      return new Promise(function (resolve) {
+        const check = function () {
+          if (!isSessionArchived(ctx, sessionId)) {
+            resolve(true)
+            return
+          }
+          if (Date.now() > deadline) {
+            resolve(false)
+            return
+          }
+          window.setTimeout(check, 80)
+        }
+        check()
+      })
+    }
+
+    /**
+     * The Host closes the main view of an archived Session (its Workspace
+     * browser refuses archived rows, and ui-workspace clears an archived
+     * current selection), which would leave a blank conversation. Opening an
+     * archived row therefore unarchives it first, then reveals the Session.
+     */
+    function openArchivedSession(ctx, sessionId, t) {
+      const workspaces = ctx.workspaces
+      if (!workspaces || typeof workspaces.unarchiveSession !== 'function') {
+        notifyPanel(ctx, t('archivedNotOpenable'), false)
+        return
+      }
+      Promise.resolve()
+        .then(function () {
+          return workspaces.unarchiveSession(sessionId)
+        })
+        .then(function () {
+          return waitUntilUnarchived(ctx, sessionId, 2000)
+        })
+        .then(function (unarchived) {
+          if (!unarchived) {
+            notifyPanel(ctx, t('archivedNotOpenable'), false)
+            return
+          }
+          const workspace = ctx.uiWorkspace
+          if (workspace && typeof workspace.openSession === 'function') workspace.openSession(sessionId)
+          openTabInSession(ctx, sessionId)
+          notifyPanel(ctx, t('archivedOpened'), true)
+        })
+        .catch(function (error) {
+          console.warn('[dsh-session-history] unarchive failed', error)
+          notifyPanel(ctx, t('archivedNotOpenable'), false)
+        })
+    }
+
     /**
      * Sessions without a durable title are displayed by the Host with a
      * placeholder (the workspace directory basename or the raw session id).
@@ -998,6 +1086,10 @@ window.__ModuleLoader__.load({
         const openSession = React.useCallback(
           function (id) {
             if (!id || id === sessionId) return
+            if (archivedIdList(ctx).indexOf(id) !== -1) {
+              openArchivedSession(ctx, id, t)
+              return
+            }
             try {
               const workspace = ctx.uiWorkspace
               if (workspace && typeof workspace.openSession === 'function') workspace.openSession(id)
@@ -1006,7 +1098,7 @@ window.__ModuleLoader__.load({
               console.warn('[dsh-session-history] open session failed', error)
             }
           },
-          [sessionId],
+          [sessionId, t],
         )
 
         const changeFilter = React.useCallback(function (value) {
@@ -1209,7 +1301,7 @@ window.__ModuleLoader__.load({
                 'data-archived': archived ? 'true' : undefined,
                 draggable: !archived,
                 style: { paddingLeft: 8 + row.depth * 14 + 'px' },
-                title: parentHint || title,
+                title: archived ? t('archivedOpenHint') : parentHint || title,
                 onDragStart: archived
                   ? undefined
                   : function (event) {
