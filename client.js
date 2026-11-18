@@ -17,16 +17,29 @@ window.__ModuleLoader__.load({
     const MAX_RECORDS = 500
     const MAX_PINS = 200
     let panelMenuSessionId = null
-    let panelMenuAt = 0
+    let panelMenuExpiresAt = 0
+    let pendingArchivedOpen = null
 
-    function markPanelMenu(sessionId) {
+    function markPanelMenu(sessionId, archived) {
       panelMenuSessionId = sessionId
-      panelMenuAt = Date.now()
+      panelMenuExpiresAt = Date.now() + 120000
+      if (archived) pendingArchivedOpen = { sessionId: sessionId, expiresAt: Date.now() + 10000 }
+    }
+
+    /**
+     * The shared menu closes its overlay before it runs the picked action, so
+     * the marker cannot be dropped the moment the overlay closes — the action
+     * still has to see it. It expires shortly after instead.
+     */
+    function expirePanelMenu() {
+      if (panelMenuSessionId === null) return
+      const shortLived = Date.now() + 5000
+      if (panelMenuExpiresAt > shortLived) panelMenuExpiresAt = shortLived
     }
 
     function isPanelMenuTarget(sessionId) {
       if (panelMenuSessionId === null || panelMenuSessionId !== sessionId) return false
-      return Date.now() - panelMenuAt < 120000
+      return Date.now() < panelMenuExpiresAt
     }
     const EMPTY_ARCHIVED = []
     const EMPTY_STATUSES = new Map()
@@ -1319,7 +1332,7 @@ window.__ModuleLoader__.load({
                   try {
                     const menus = ctx.contextMenus
                     if (!menus || typeof menus.open !== 'function') return
-                    markPanelMenu(row.sessionId)
+                    markPanelMenu(row.sessionId, archived)
                     menus.open(
                       { kind: 'session', value: { sessionId: row.sessionId, displayTitle: title } },
                       { x: event.clientX, y: event.clientY },
@@ -1525,7 +1538,7 @@ window.__ModuleLoader__.load({
             const active = menus && menus.active
             if (!active || typeof active.subscribe !== 'function') return function () {}
             const unsubscribe = active.subscribe(function () {
-              if (active.getSnapshot() === null) panelMenuSessionId = null
+              if (active.getSnapshot() === null) expirePanelMenu()
             })
             return function () {
               unsubscribe()
@@ -1607,42 +1620,48 @@ window.__ModuleLoader__.load({
         )
 
         /**
-         * The shared session menu's 取消归档 action calls this endpoint. When
-         * the menu was opened from the panel, keep the click and additionally
-         * reveal the Session once the unarchive has landed.
+         * The shared session menu's 取消归档 action is run by ui-workspace
+         * itself. Instead of intercepting its service call, watch the archive
+         * snapshot: a menu that started on an archived panel row leaves an
+         * intent behind, and the Session leaving the archived set fulfils it
+         * (reveal + success notice). The intent expires on its own.
          */
         ctx.effect(
           function () {
             const service = ctx.workspaces || (typeof ctx.get === 'function' ? ctx.get('workspaces') : undefined)
-            if (!service || typeof service.unarchiveSession !== 'function') return function () {}
-            const original = service.unarchiveSession
-            if (original && original.__dshSessionHistoryWrapped) return function () {}
-            const wrapped = function (sessionId) {
-              const fromPanel = isPanelMenuTarget(sessionId)
-              if (!fromPanel) return original.apply(service, arguments)
-              return Promise.resolve()
-                .then(function () {
-                  return original.call(service, sessionId)
-                })
-                .then(function (value) {
-                  panelMenuSessionId = null
-                  revealUnarchivedSession(ctx, sessionId, t).catch(function (error) {
-                    console.warn('[dsh-session-history] reveal unarchived session failed', error)
-                  })
-                  return value
-                })
-                .catch(function (error) {
-                  notifyPanel(ctx, t('archivedNotOpenable'), false)
-                  throw error
-                })
+            const list = service && service.list
+            if (!list || typeof list.subscribe !== 'function' || typeof list.getSnapshot !== 'function') {
+              return function () {}
             }
-            wrapped.__dshSessionHistoryWrapped = true
-            service.unarchiveSession = wrapped
+            const unsubscribe = list.subscribe(function () {
+              const pending = pendingArchivedOpen
+              if (!pending) return
+              if (Date.now() > pending.expiresAt) {
+                pendingArchivedOpen = null
+                return
+              }
+              let archived = true
+              try {
+                const snapshot = list.getSnapshot()
+                archived =
+                  !!snapshot &&
+                  Array.isArray(snapshot.archivedSessionIds) &&
+                  snapshot.archivedSessionIds.indexOf(pending.sessionId) !== -1
+              } catch (error) {
+                archived = true
+              }
+              if (archived) return
+              pendingArchivedOpen = null
+              panelMenuSessionId = null
+              revealUnarchivedSession(ctx, pending.sessionId, t).catch(function (error) {
+                console.warn('[dsh-session-history] reveal unarchived session failed', error)
+              })
+            })
             return function () {
-              if (service.unarchiveSession === wrapped) service.unarchiveSession = original
+              unsubscribe()
             }
           },
-          'dsh-session-history: archived open',
+          'dsh-session-history: archived reveal watcher',
         )
 
         ctx.effect(

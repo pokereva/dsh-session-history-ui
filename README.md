@@ -29,7 +29,7 @@
 - 分支关系在客户端包装 `ctx.sessions.fork` 记录；DSH 的普通 fork 不持久化父会话信息，因此只能在这一层记录。
 - 「展示分支」的置顶是面板本地状态：打开菜单时记录来源会话，随后临时屏蔽 `ctx.remoteAccess.source` 里 `workspace/pinSession`、`workspace/unpinSession` 两个端点的数据（让内置的「置顶会话」项不出现），并注册本插件的 `session.historyPin` 菜单项写入本地置顶；`ctx.workspaces.pinSession/unpinSession` 也做了同样的兜底重定向，左侧工作区不受影响。
 - 历史分支推断在 `buildBranchRows` 里完成：没有本地分支记录的会话先看 `summary.parentSessionId`（Host 有时仍会返回），再按标题正则 `/^(.+?)\s*[\(（]\d+[\)）]$/` 推导父标题并匹配现存会话；推断的父子关系在下钻时带环检测，根节点顺序仍按置顶/拖拽顺序/`updatedAt` 排序。
-- 已归档会话的左键点击被忽略：ui-workspace 的 `watchNavigation` 在 `archivedSessionIds` 包含当前主视图会话时会 `clearMain()`，直接打开只会得到空白主视图。插件包装了 `ctx.workspaces.unarchiveSession`：当会话右键菜单是从本面板打开时（`isPanelMenuTarget`），在取消归档成功后轮询 Host 归档快照，确认 id 不在 `archivedSessionIds` 里再 `ctx.uiWorkspace.openSession(sessionId)` 并提示成功。
+- 已归档会话的左键点击被忽略：ui-workspace 的 `watchNavigation` 在 `archivedSessionIds` 包含当前主视图会话时会 `clearMain()`，直接打开只会得到空白主视图。右键本面板的归档行会留下一个「待打开意图」（10 秒有效）；插件订阅 `ctx.workspaces.list`，一旦该会话从 `archivedSessionIds` 中消失（说明共享菜单里的「取消归档」动作已生效），就 `ctx.uiWorkspace.openSession(sessionId)` 并提示成功。这样不依赖拦截 ui-workspace 的服务调用，任何取消归档路径都能兜住。注意共享菜单会在执行菜单项之前先把 `contextMenus.active` 置空，因此面板标记采用「到期时间」而不是「active 变 null 立即清除」。
 - 已归档会话走单独的 `buildArchivedRows`：只取存在于 `ctx.workspaces.list` 的 `archivedSessionIds` 里、且有真实标题的非子代理会话，按 `updatedAt` 倒序平铺在分支树下方；归档行不参与置顶、拖拽和分支树父子关系。
 - 拖动顺序通过 HTML5 拖拽实现，落位后把当前展示顺序写回 `dsh.session-history.order.v1`；拖动时的蓝色插入线用 `::before` / `::after` 绘制，颜色取主题变量 `--dsw-alias-state-business-primary`，按指针落在行的上半/下半决定插入在目标行之前还是之后。
 - 运行 / 完成状态来自 `ctx.uiSession.sessionStatus`（`completionUnread` / `running`）：完成的标题使用 `--dsw-alias-state-warn-label`，圆点分别使用活动蓝与完成绿，与左侧工作区的状态语言保持一致。
