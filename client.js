@@ -1,15 +1,15 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-session-history',
+  id: 'dsh-session-history-ui',
   factory(require) {
     const React = require('react')
     const h = React.createElement
 
-    const TAB_ID = '@local/dsh-session-history'
+    const TAB_ID = 'dsh-session-history-ui'
     const TAB_KIND = 'session-history'
     const NAMESPACE = 'sessionHistory'
     const RECORDS_KEY = 'dsh.session-history.branches.v1'
     const MODE_KEY = 'dsh.session-history.mode.v1'
-    const STYLE_ID = '@local/dsh-session-history/session-history.css'
+    const STYLE_ID = 'dsh-session-history-ui/session-history.css'
     const FILTER_KEY = 'dsh.session-history.filters.v1'
     const PIN_KEY = 'dsh.session-history.pinned.v1'
     const ORDER_KEY = 'dsh.session-history.order.v1'
