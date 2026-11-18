@@ -38,7 +38,7 @@ window.__ModuleLoader__.load({
       tabBranches: '展示分支',
       filterPlaceholder: '过滤用户发言（支持 * 与 ?，多项用逗号分隔）',
       filterReset: '重置',
-      filterHidden: '已按过滤条件隐藏 {count} 条',
+      filterCounted: '已过滤{count}条',
       filterHint: '过滤用户发言, 使用英文逗号隔开',
       filterWildcard: '通配符：? 匹配一个字符，* 匹配任意字符',
       emptyHistory: '本会话还没有生成聊天记录。',
@@ -62,7 +62,7 @@ window.__ModuleLoader__.load({
       tabBranches: 'Branches',
       filterPlaceholder: 'Filter user messages (supports * and ?, separate with commas)',
       filterReset: 'Reset',
-      filterHidden: '{count} hidden by the filter',
+      filterCounted: '{count} filtered',
       filterHint: 'Filter user messages, separated by English commas',
       filterWildcard: 'Wildcards: ? matches one character, * matches any characters',
       emptyHistory: 'This conversation has no recorded turns yet.',
@@ -1178,11 +1178,8 @@ window.__ModuleLoader__.load({
                 t('filterReset'),
               ),
             ),
-            h('div', { className: 'dsh-sh-filterMeta' }, t('filterHint')),
+            h('div', { className: 'dsh-sh-filterMeta' }, t('filterHint') + ', ' + t('filterCounted').replace('{count}', String(hiddenTurns))),
             h('div', { className: 'dsh-sh-filterMeta' }, t('filterWildcard')),
-            hiddenTurns > 0
-              ? h('div', { className: 'dsh-sh-filterMeta' }, t('filterHidden').replace('{count}', String(hiddenTurns)))
-              : null,
             h(
               'div',
               { className: 'dsh-sh-list' },
