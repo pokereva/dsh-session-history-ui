@@ -13,6 +13,7 @@ window.__ModuleLoader__.load({
     const FILTER_KEY = 'dsh.session-history.filters.v1'
     const PIN_KEY = 'dsh.session-history.pinned.v1'
     const ORDER_KEY = 'dsh.session-history.order.v1'
+    const SHOW_ARCHIVED_KEY = 'dsh.session-history.showArchived.v1'
     const MAX_RECORDS = 500
     const MAX_PINS = 200
     let panelMenuSessionId = null
@@ -49,6 +50,9 @@ window.__ModuleLoader__.load({
       noText: '（无文本）',
       forkedFrom: '分支自',
       inferredSuffix: '（推断）',
+      showArchived: '展示已归档的会话',
+      emptyArchived: '没有已归档的会话。',
+      archivedBadge: '已归档',
       pinSession: '置顶会话',
       unpinSession: '取消置顶',
       pinnedBadge: '置顶',
@@ -74,6 +78,9 @@ window.__ModuleLoader__.load({
       noText: '(no text)',
       forkedFrom: 'Forked from',
       inferredSuffix: ' (inferred)',
+      showArchived: 'Show archived sessions',
+      emptyArchived: 'No archived sessions.',
+      archivedBadge: 'Archived',
       pinSession: 'Pin session',
       unpinSession: 'Unpin session',
       pinnedBadge: 'Pinned',
@@ -276,6 +283,35 @@ window.__ModuleLoader__.load({
 .dsh-sh-session[data-current='true'] {
   background: var(--dsw-alias-bg-layer-1);
 }
+.dsh-sh-session[data-archived='true'] .dsh-sh-sessionTitle {
+  color: var(--dsw-alias-label-tertiary);
+}
+.dsh-sh-session[data-archived='true'] .dsh-sh-sessionLine {
+  opacity: 0.85;
+}
+.dsh-sh-archivedBar {
+  display: flex;
+  align-items: center;
+  margin: 10px 0 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+.dsh-sh-archivedToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.dsh-sh-archivedCheck {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--dsw-alias-state-business-primary);
+  cursor: pointer;
+}
 .dsh-sh-sessionLine {
   display: flex;
   align-items: center;
@@ -422,6 +458,14 @@ window.__ModuleLoader__.load({
 
     function writeMode(mode) {
       writeJson(MODE_KEY, mode)
+    }
+
+    function readShowArchived() {
+      return readJson(SHOW_ARCHIVED_KEY, false) === true
+    }
+
+    function writeShowArchived(value) {
+      writeJson(SHOW_ARCHIVED_KEY, value === true)
     }
 
     function readFilterPatterns() {
@@ -827,11 +871,33 @@ window.__ModuleLoader__.load({
       return rows
     }
 
+    /**
+     * Archived sessions are listed after the branch tree, behind an explicit
+     * toggle. They keep their flat updatedAt order instead of tree order.
+     */
+    function buildArchivedRows(sessions, archivedIds) {
+      const byId = sessions && sessions.byId ? sessions.byId : {}
+      const rows = []
+      for (const id of sessions && sessions.ids ? sessions.ids : []) {
+        const summary = byId[id]
+        if (!summary) continue
+        if (summary.origin === 'subagent') continue
+        if (!hasDurableTitle(summary)) continue
+        if (!archivedIds || !archivedIds.has(id)) continue
+        rows.push({ sessionId: id, depth: 0, archived: true })
+      }
+      rows.sort(function (a, b) {
+        return ((byId[b.sessionId] && byId[b.sessionId].updatedAt) || 0) - ((byId[a.sessionId] && byId[a.sessionId].updatedAt) || 0)
+      })
+      return rows
+    }
+
     function createPanel(ctx, store, pins, order) {
       return function SessionHistoryPanel(props) {
         const t = props.t
         const sessionId = props.sessionId
         const [mode, setMode] = React.useState(readMode)
+        const [showArchived, setShowArchived] = React.useState(readShowArchived)
         const [filterText, setFilterText] = React.useState(function () {
           return formatFilterText(readFilterPatterns())
         })
@@ -989,6 +1055,20 @@ window.__ModuleLoader__.load({
           [sessions, records, archivedIds, pinnedIds, orderIds],
         )
 
+        const archivedRows = React.useMemo(
+          function () {
+            if (!sessions) return []
+            return buildArchivedRows(sessions, new Set(Array.isArray(archivedIds) ? archivedIds : []))
+          },
+          [sessions, archivedIds],
+        )
+
+        const toggleShowArchived = React.useCallback(function (event) {
+          const next = !!(event && event.target && event.target.checked)
+          setShowArchived(next)
+          writeShowArchived(next)
+        }, [])
+
         const [dragId, setDragId] = React.useState(null)
         const [dropId, setDropId] = React.useState(null)
         const [dropAfter, setDropAfter] = React.useState(false)
@@ -1098,22 +1178,27 @@ window.__ModuleLoader__.load({
         )
 
         if (mode === 'branches') {
-          const rows = branchRows.map(function (row) {
+          const renderSessionRow = function (row, archived) {
             const summary = sessions.byId[row.sessionId] || {}
             const title = summary.displayTitle || summary.title || t('untitled')
             const parentSummary = row.parentId ? sessions.byId[row.parentId] : undefined
             const parentTitle = hasDurableTitle(parentSummary)
               ? parentSummary.displayTitle || parentSummary.title
               : undefined
-            const pinned = pins.has(row.sessionId)
+            const pinned = !archived && pins.has(row.sessionId)
             const status = statuses && typeof statuses.get === 'function' ? statuses.get(row.sessionId) : undefined
             const running = !!(status && status.running) || !!summary.running
             const unread = !!(status && status.completionUnread)
             let className = 'dsh-sh-session'
-            if (dragId === row.sessionId) className += ' dsh-sh-sessionDragging'
-            if (dropId === row.sessionId && dragId && dragId !== row.sessionId) {
+            if (archived) className += ' dsh-sh-sessionArchived'
+            if (!archived && dragId === row.sessionId) className += ' dsh-sh-sessionDragging'
+            if (!archived && dropId === row.sessionId && dragId && dragId !== row.sessionId) {
               className += dropAfter ? ' dsh-sh-sessionDropAfter' : ' dsh-sh-sessionDropBefore'
             }
+            const parentHint =
+              !archived && row.depth > 0 && parentTitle
+                ? t('forkedFrom') + ' ' + parentTitle + (row.inferred ? t('inferredSuffix') : '')
+                : undefined
             return h(
               'button',
               {
@@ -1121,27 +1206,34 @@ window.__ModuleLoader__.load({
                 key: row.sessionId,
                 className: className,
                 'data-current': row.sessionId === sessionId ? 'true' : undefined,
-                draggable: true,
+                'data-archived': archived ? 'true' : undefined,
+                draggable: !archived,
                 style: { paddingLeft: 8 + row.depth * 14 + 'px' },
-                title: parentTitle
-                  ? t('forkedFrom') + ' ' + parentTitle + (row.inferred ? t('inferredSuffix') : '')
-                  : title,
-                onDragStart: function (event) {
-                  startDrag(event, row)
-                },
-                onDragOver: function (event) {
-                  enterDrop(event, row)
-                },
-                onDragLeave: function () {
-                  if (dropId === row.sessionId) {
-                    setDropId(null)
-                    setDropAfter(false)
-                  }
-                },
-                onDragEnd: endDrag,
-                onDrop: function (event) {
-                  drop(event, row)
-                },
+                title: parentHint || title,
+                onDragStart: archived
+                  ? undefined
+                  : function (event) {
+                      startDrag(event, row)
+                    },
+                onDragOver: archived
+                  ? undefined
+                  : function (event) {
+                      enterDrop(event, row)
+                    },
+                onDragLeave: archived
+                  ? undefined
+                  : function () {
+                      if (dropId === row.sessionId) {
+                        setDropId(null)
+                        setDropAfter(false)
+                      }
+                    },
+                onDragEnd: archived ? undefined : endDrag,
+                onDrop: archived
+                  ? undefined
+                  : function (event) {
+                      drop(event, row)
+                    },
                 onContextMenu: function (event) {
                   if (event && typeof event.preventDefault === 'function') event.preventDefault()
                   try {
@@ -1172,16 +1264,17 @@ window.__ModuleLoader__.load({
                   title,
                 ),
                 pinned ? h('span', { className: 'dsh-sh-badge' }, t('pinnedBadge')) : null,
+                archived ? h('span', { className: 'dsh-sh-badge' }, t('archivedBadge')) : null,
                 row.sessionId === sessionId ? h('span', { className: 'dsh-sh-badge' }, t('current')) : null,
               ),
-              row.depth > 0 && parentTitle
-                ? h(
-                    'span',
-                    { className: 'dsh-sh-parent' },
-                    t('forkedFrom') + ' ' + parentTitle + (row.inferred ? t('inferredSuffix') : ''),
-                  )
-                : null,
+              parentHint ? h('span', { className: 'dsh-sh-parent' }, parentHint) : null,
             )
+          }
+          const rows = branchRows.map(function (row) {
+            return renderSessionRow(row, false)
+          })
+          const archivedList = archivedRows.map(function (row) {
+            return renderSessionRow(row, true)
           })
 
           return h(
@@ -1195,7 +1288,29 @@ window.__ModuleLoader__.load({
               h(
                 'div',
                 { className: 'dsh-sh-list' },
-                rows.length === 0 ? h('div', { className: 'dsh-sh-empty' }, t('emptyBranches')) : rows,
+                rows.length === 0 && archivedList.length === 0
+                  ? h('div', { className: 'dsh-sh-empty' }, t('emptyBranches'))
+                  : rows,
+                h(
+                  'div',
+                  { className: 'dsh-sh-archivedBar' },
+                  h(
+                    'label',
+                    { className: 'dsh-sh-archivedToggle' },
+                    h('input', {
+                      type: 'checkbox',
+                      className: 'dsh-sh-archivedCheck',
+                      checked: showArchived,
+                      onChange: toggleShowArchived,
+                    }),
+                    h('span', null, t('showArchived')),
+                  ),
+                ),
+                showArchived
+                  ? archivedList.length === 0
+                    ? h('div', { className: 'dsh-sh-empty' }, t('emptyArchived'))
+                    : archivedList
+                  : null,
               ),
             ),
           )
@@ -1424,6 +1539,18 @@ window.__ModuleLoader__.load({
               },
               resolve: function (target) {
                 if (!target || !isPanelMenuTarget(target.sessionId)) return []
+                let archived = false
+                try {
+                  const list = ctx.workspaces && ctx.workspaces.list
+                  const snapshot = list && typeof list.getSnapshot === 'function' ? list.getSnapshot() : undefined
+                  archived =
+                    !!snapshot &&
+                    Array.isArray(snapshot.archivedSessionIds) &&
+                    snapshot.archivedSessionIds.indexOf(target.sessionId) !== -1
+                } catch (error) {
+                  archived = false
+                }
+                if (archived) return []
                 const pinned = pins.has(target.sessionId)
                 return [
                   {
