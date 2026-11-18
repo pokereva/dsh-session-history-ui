@@ -69,6 +69,7 @@ window.__ModuleLoader__.load({
       archivedOpenHint: '已归档：右键选择「取消归档」可打开',
       archivedOpened: '已取消归档并打开会话',
       archivedNotOpenable: '无法取消归档，请在右键菜单中操作',
+      archivedSwitched: '当前会话已归档，已自动切换到上一个会话',
       pinSession: '置顶会话',
       unpinSession: '取消置顶',
       pinnedBadge: '置顶',
@@ -99,6 +100,7 @@ window.__ModuleLoader__.load({
       archivedBadge: 'Archived',
       archivedOpenHint: 'Archived: use 取消归档 in the context menu to open it',
       archivedOpened: 'Unarchived and opened the session',
+      archivedSwitched: 'The current session was archived — switched to the previous session',
       archivedNotOpenable: 'Could not unarchive; use the context menu',
       pinSession: 'Pin session',
       unpinSession: 'Unpin session',
@@ -780,6 +782,22 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** Session currently held by the main view, read from the list projection. */
+    function mainViewSessionId(ctx) {
+      try {
+        const list = ctx.sessions && ctx.sessions.list
+        const snapshot = list && typeof list.getSnapshot === 'function' ? list.getSnapshot() : undefined
+        const byId = snapshot && snapshot.byId ? snapshot.byId : {}
+        for (const id of Object.keys(byId)) {
+          const summary = byId[id]
+          if (summary && summary.retainedBy && (summary.retainedBy.mainView || 0) > 0) return id
+        }
+      } catch (error) {
+        /* best effort */
+      }
+      return undefined
+    }
+
     function notifyPanel(ctx, text, success) {
       try {
         const menus = ctx.contextMenus
@@ -1133,6 +1151,24 @@ window.__ModuleLoader__.load({
           [turns, compiledFilters],
         )
         const hiddenTurns = turns.length - visibleTurns.length
+        const historyListRef = React.useRef(null)
+        const historyPinnedRef = React.useRef(true)
+
+        React.useEffect(
+          function () {
+            if (mode !== 'history') return
+            const node = historyListRef.current
+            if (!node) return
+            if (!historyPinnedRef.current) return
+            node.scrollTop = node.scrollHeight
+          },
+          [mode, visibleTurns.length, filterText, sessionId],
+        )
+
+        const onHistoryScroll = React.useCallback(function (event) {
+          const node = event.currentTarget
+          historyPinnedRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 24
+        }, [])
 
         const branchRows = React.useMemo(
           function () {
@@ -1445,7 +1481,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dsh-sh-filterMeta' }, t('filterWildcard')),
             h(
               'div',
-              { className: 'dsh-sh-list' },
+              { className: 'dsh-sh-list', ref: historyListRef, onScroll: onHistoryScroll },
               visibleTurns.length === 0
                 ? h('div', { className: 'dsh-sh-empty' }, t('emptyHistory'))
                 : visibleTurns.map(function (item) {
@@ -1662,6 +1698,124 @@ window.__ModuleLoader__.load({
             }
           },
           'dsh-session-history: archived reveal watcher',
+        )
+
+        /**
+         * Archiving the Session that is currently open makes the Host clear the
+         * main view, which leaves a blank page. Remember the Session that was
+         * open before and fall back to it when the current one gets archived.
+         */
+        ctx.effect(
+          function () {
+            const sessionsList = ctx.sessions && ctx.sessions.list
+            if (!sessionsList || typeof sessionsList.subscribe !== 'function') return function () {}
+            const service = ctx.workspaces || (typeof ctx.get === 'function' ? ctx.get('workspaces') : undefined)
+            const workspaceList = service && service.list
+            let lastMainId
+            const previous = []
+            let pending = null
+            const timers = new Set()
+
+            const remember = function (id) {
+              if (!id) return
+              const index = previous.indexOf(id)
+              if (index !== -1) previous.splice(index, 1)
+              previous.push(id)
+              if (previous.length > 20) previous.shift()
+            }
+
+            const fallbackTarget = function (archivedId) {
+              let byId = {}
+              try {
+                const snapshot = sessionsList.getSnapshot()
+                byId = snapshot && snapshot.byId ? snapshot.byId : {}
+              } catch (error) {
+                byId = {}
+              }
+              const archived = archivedIdList(ctx)
+              for (let index = previous.length - 1; index >= 0; index -= 1) {
+                const id = previous[index]
+                if (id === archivedId) continue
+                if (!byId[id]) continue
+                if (archived.indexOf(id) !== -1) continue
+                return id
+              }
+              return undefined
+            }
+
+            const evaluate = function () {
+              const mainId = mainViewSessionId(ctx)
+              if (!mainId) {
+                if (lastMainId === undefined) return
+                const archivedId = lastMainId
+                lastMainId = undefined
+                if (isSessionArchived(ctx, archivedId)) pending = fallbackTarget(archivedId) || null
+                return
+              }
+              if (mainId !== lastMainId) {
+                if (lastMainId) remember(lastMainId)
+                lastMainId = mainId
+              }
+              pending = null
+            }
+
+            const applyFallback = function () {
+              const target = pending
+              if (!target) return
+              pending = null
+              if (mainViewSessionId(ctx) !== undefined) return
+              let byId = {}
+              try {
+                const snapshot = sessionsList.getSnapshot()
+                byId = snapshot && snapshot.byId ? snapshot.byId : {}
+              } catch (error) {
+                byId = {}
+              }
+              if (!byId[target]) return
+              if (isSessionArchived(ctx, target)) return
+              try {
+                const workspace = ctx.uiWorkspace
+                if (workspace && typeof workspace.openSession === 'function') {
+                  workspace.openSession(target)
+                  openTabInSession(ctx, target)
+                  notifyPanel(ctx, t('archivedSwitched'), true)
+                }
+              } catch (error) {
+                console.warn('[dsh-session-history] archived fallback failed', error)
+              }
+            }
+
+            const schedule = function () {
+              if (timers.size > 0) return
+              const timer = window.setTimeout(function () {
+                timers.delete(timer)
+                applyFallback()
+              }, 120)
+              timers.add(timer)
+            }
+
+            const onSessions = function () {
+              evaluate()
+              if (pending) schedule()
+            }
+            const onWorkspace = function () {
+              evaluate()
+              if (pending) schedule()
+            }
+
+            evaluate()
+            const offSessions = sessionsList.subscribe(onSessions)
+            const offWorkspace =
+              workspaceList && typeof workspaceList.subscribe === 'function'
+                ? workspaceList.subscribe(onWorkspace)
+                : function () {}
+            return function () {
+              if (typeof offSessions === 'function') offSessions()
+              if (typeof offWorkspace === 'function') offWorkspace()
+              for (const timer of timers) window.clearTimeout(timer)
+            }
+          },
+          'dsh-session-history: archived fallback',
         )
 
         ctx.effect(
