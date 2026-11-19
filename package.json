@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-history-ui",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Right-sidebar session history and branch browser for DeepSeek Harness: browse this conversation's turns, jump the chat to any turn, filter user messages, and see every conversation with its forked branches.",
   "type": "module",
   "exports": {

@@ -45,6 +45,110 @@ window.__ModuleLoader__.load({
     const EMPTY_STATUSES = new Map()
     const DEFAULT_FILTERS = ['继续', '继续任务']
 
+    /** Panels currently mounted; Ctrl+F asks them to reveal the finder. */
+    const finderHooks = new Set()
+
+    function requestFinder(ctx) {
+      try {
+        const controller = ctx.sidebarRight
+        if (controller && typeof controller.openTab === 'function') controller.openTab(TAB_KIND)
+      } catch (error) {
+        /* the tab may already be open, or no session owns the sidebar */
+      }
+      let attempts = 0
+      const attempt = function () {
+        if (finderHooks.size > 0) {
+          finderHooks.forEach(function (open) {
+            try {
+              open()
+            } catch (error) {
+              /* ignore a broken instance */
+            }
+          })
+          return
+        }
+        attempts += 1
+        if (attempts > 30) return
+        window.setTimeout(attempt, 80)
+      }
+      window.setTimeout(attempt, 40)
+    }
+
+    /** Turn currently at the top of the chat viewport, read from the chat DOM. */
+    function currentVisibleTurn() {
+      try {
+        const rows = Array.prototype.slice.call(document.querySelectorAll('[data-chat-turn]'))
+        if (rows.length === 0) return undefined
+        const scroller = document.querySelector('[data-conversation-scroll]')
+        const bounds =
+          scroller && typeof scroller.getBoundingClientRect === 'function'
+            ? scroller.getBoundingClientRect()
+            : { top: 0, bottom: window.innerHeight || 800 }
+        let topTurn
+        let topEdge = -Infinity
+        let firstTurn
+        for (let index = 0; index < rows.length; index += 1) {
+          const row = rows[index]
+          const turn = Number(row.getAttribute('data-chat-turn'))
+          if (!isFinite(turn)) continue
+          const rect = row.getBoundingClientRect()
+          if (rect.bottom > bounds.top && rect.top < bounds.bottom && firstTurn === undefined) firstTurn = turn
+          if (rect.top <= bounds.top + 24 && rect.top > topEdge) {
+            topEdge = rect.top
+            topTurn = turn
+          }
+        }
+        return topTurn !== undefined ? topTurn : firstTurn
+      } catch (error) {
+        return undefined
+      }
+    }
+
+    const FIND_SCOPES = ['all', 'ai', 'user']
+
+    function findHitsFor(turns, query, scope) {
+      const needle = typeof query === 'string' ? query.trim().toLowerCase() : ''
+      if (needle === '' || !Array.isArray(turns)) return []
+      const hits = []
+      for (let index = 0; index < turns.length; index += 1) {
+        const item = turns[index]
+        if (!item) continue
+        const fields = []
+        if (scope !== 'ai') {
+          fields.push({ field: 'user', text: typeof item.prompt === 'string' ? item.prompt : '' })
+        }
+        if (scope !== 'user') {
+          fields.push({ field: 'ai', text: typeof item.response === 'string' ? item.response : '' })
+        }
+        for (let cursor = 0; cursor < fields.length; cursor += 1) {
+          const entry = fields[cursor]
+          if (entry.text.toLowerCase().indexOf(needle) !== -1) {
+            hits.push({ turn: item.turn, seq: item.seq, field: entry.field })
+          }
+        }
+      }
+      return hits
+    }
+
+    function highlightText(text, query) {
+      const value = typeof text === 'string' ? text : ''
+      const needle = typeof query === 'string' ? query.trim() : ''
+      if (needle === '') return [value]
+      const lowerValue = value.toLowerCase()
+      const lowerNeedle = needle.toLowerCase()
+      const pieces = []
+      let from = 0
+      let at = lowerValue.indexOf(lowerNeedle)
+      while (at !== -1) {
+        if (at > from) pieces.push(value.slice(from, at))
+        pieces.push(h('mark', { key: 'm' + at, className: 'dsh-sh-mark' }, value.slice(at, at + needle.length)))
+        from = at + needle.length
+        at = lowerValue.indexOf(lowerNeedle, from)
+      }
+      if (from < value.length) pieces.push(value.slice(from))
+      return pieces.length === 0 ? [value] : pieces
+    }
+
     const zh = {
       title: '会话历史',
       guideDescription: '浏览本会话的聊天记录并跳转到对应位置，也可以切换查看所有会话与它们的分支。',
@@ -75,6 +179,14 @@ window.__ModuleLoader__.load({
       pinnedBadge: '置顶',
       jumpFailed: '无法跳转到这条记录',
       openFailed: '无法打开这个会话',
+      findPlaceholder: '在会话历史中查找',
+      findPrev: '上一个匹配',
+      findNext: '下一个匹配',
+      findClose: '关闭查找',
+      findScopeAll: '全局',
+      findScopeAi: 'AI',
+      findScopeUser: '人类',
+      findNoResults: '无结果',
     }
 
     const en = {
@@ -107,6 +219,14 @@ window.__ModuleLoader__.load({
       pinnedBadge: 'Pinned',
       jumpFailed: 'Could not jump to this turn',
       openFailed: 'Could not open this session',
+      findPlaceholder: 'Find in session history',
+      findPrev: 'Previous match',
+      findNext: 'Next match',
+      findClose: 'Close find',
+      findScopeAll: 'All',
+      findScopeAi: 'AI',
+      findScopeUser: 'Human',
+      findNoResults: 'No results',
     }
 
     const CSS = `
@@ -146,7 +266,7 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-primary);
 }
 .dsh-sh-tab:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline: 2px solid var(--dsw-alias-state-business-primary, #4d6bfe);
   outline-offset: 1px;
 }
 .dsh-sh-tabActive,
@@ -184,7 +304,7 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-tertiary);
 }
 .dsh-sh-filterInput:focus {
-  border-color: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-state-business-primary, #4d6bfe);
 }
 .dsh-sh-filterReset {
   flex: 0 0 auto;
@@ -235,6 +355,7 @@ window.__ModuleLoader__.load({
 }
 .dsh-sh-row {
   padding: 6px 8px;
+  background: transparent;
 }
 .dsh-sh-row:hover,
 .dsh-sh-session:hover {
@@ -242,7 +363,7 @@ window.__ModuleLoader__.load({
 }
 .dsh-sh-row:focus-visible,
 .dsh-sh-session:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline: 2px solid var(--dsw-alias-state-business-primary, #4d6bfe);
   outline-offset: -2px;
 }
 .dsh-sh-rowHead {
@@ -396,6 +517,117 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-tertiary);
   line-height: 1.6;
   text-align: center;
+}
+.dsh-sh-rowCurrent,
+.dsh-sh-rowCurrent:hover {
+  background: rgba(77, 107, 254, 0.16);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4d6bfe) 16%, transparent);
+  box-shadow: inset 0 0 0 2px var(--dsw-alias-state-business-primary, #4d6bfe);
+}
+.dsh-sh-flashLayer {
+  position: fixed;
+  z-index: 2147483000;
+  pointer-events: none;
+  border-radius: 12px;
+  border: 2px solid rgba(77, 107, 254, 0.9);
+  background: rgba(77, 107, 254, 0.26);
+  box-shadow: 0 0 26px 6px rgba(77, 107, 254, 0.38), inset 0 0 22px rgba(77, 107, 254, 0.28);
+  animation: dsh-sh-flash-fade 2.2s ease-out forwards;
+}
+@keyframes dsh-sh-flash-fade {
+  0% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 0.75;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.dsh-sh-find {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 0;
+}
+.dsh-sh-findInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-state-business-primary, #4d6bfe);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+.dsh-sh-findInput::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+.dsh-sh-findCount {
+  flex: 0 0 auto;
+  min-width: 34px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  text-align: right;
+}
+.dsh-sh-findButton {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dsh-sh-findButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+.dsh-sh-findScopes {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 6px 8px 0;
+}
+.dsh-sh-findScope {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.dsh-sh-findScope:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.dsh-sh-findScopeActive,
+.dsh-sh-findScopeActive:hover {
+  border-color: var(--dsw-alias-state-business-primary, #4d6bfe);
+  background: var(--dsw-alias-bg-multi-select, transparent);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+.dsh-sh-mark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: rgba(77, 107, 254, 0.32);
+  color: inherit;
 }
 `
 
@@ -697,38 +929,164 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function findTurnRow(turn) {
+    /** The human message row of a turn (falls back to that turn's first row). */
+    function userRowOfTurn(turn) {
       const rows = Array.from(document.querySelectorAll('[data-chat-turn]'))
-      let exact = null
+      let exactUser = null
+      let exactFirst = null
       let nearestAfter = null
       let last = null
       for (const row of rows) {
         const value = Number(row.getAttribute('data-chat-turn'))
         if (!Number.isFinite(value)) continue
-        if (value === turn && exact === null) exact = row
+        if (value === turn) {
+          if (exactFirst === null) exactFirst = row
+          if (exactUser === null && row.getAttribute('data-chat-flow-kind') === 'user') exactUser = row
+        }
         if (value >= turn && (nearestAfter === null || value < Number(nearestAfter.getAttribute('data-chat-turn')))) {
           nearestAfter = row
         }
         if (last === null || value > Number(last.getAttribute('data-chat-turn'))) last = row
       }
-      return exact || nearestAfter || last
+      return exactUser || exactFirst || nearestAfter || last
+    }
+
+    /** The visible bubble inside a chat row (the user message bubble when present). */
+    function bubbleOf(row) {
+      try {
+        const bubble = row.querySelector('[data-message-bubble]')
+        if (bubble) return bubble
+      } catch (error) {
+        /* not a DOM node */
+      }
+      // The row itself is a transparent flex seat; the painted bubble is the
+      // largest descendant that actually has a background colour.
+      try {
+        const nodes = row.querySelectorAll('*')
+        let best = null
+        let bestArea = 0
+        for (let index = 0; index < nodes.length; index += 1) {
+          const node = nodes[index]
+          const style = window.getComputedStyle(node)
+          const background = style.backgroundColor
+          if (!background || background === 'transparent' || background === 'rgba(0, 0, 0, 0)') continue
+          const rect = node.getBoundingClientRect()
+          const area = rect.width * rect.height
+          if (area > bestArea) {
+            best = node
+            bestArea = area
+          }
+        }
+        if (best) return best
+      } catch (error) {
+        /* headless/edge cases fall through */
+      }
+      return row.firstElementChild || row
+    }
+
+    /**
+     * Pulse a blue halo over the human message bubble of a turn.
+     *
+     * The halo is a body-level overlay rather than a class on the bubble: the
+     * chat is a React tree and an externally added class is dropped on the next
+     * render. The overlay follows the bubble every frame so scrolling keeps it
+     * glued to the message, and it is clipped to the chat scroller so it never
+     * floats over chrome once the message leaves the viewport.
+     */
+    function flashTurnRow(turn) {
+      const row = userRowOfTurn(turn)
+      if (!row) return
+      const bubble = bubbleOf(row)
+      let scroller = null
+      try {
+        scroller = row.closest('[data-conversation-scroll]')
+      } catch (error) {
+        scroller = null
+      }
+      const layer = document.createElement('div')
+      layer.className = 'dsh-sh-flashLayer'
+      layer.style.display = 'none'
+      document.body.appendChild(layer)
+      const started = Date.now()
+      let frame
+      let removed = false
+      const remove = function () {
+        if (removed) return
+        removed = true
+        if (frame !== undefined) window.cancelAnimationFrame(frame)
+        try {
+          if (layer.parentNode) layer.parentNode.removeChild(layer)
+        } catch (error) {
+          /* already detached */
+        }
+      }
+      const place = function () {
+        if (removed) return
+        if (!bubble.isConnected) {
+          remove()
+          return
+        }
+        const rect = bubble.getBoundingClientRect()
+        let left = rect.left
+        let top = rect.top
+        let right = rect.right
+        let bottom = rect.bottom
+        if (scroller !== null) {
+          const bounds = scroller.getBoundingClientRect()
+          left = Math.max(left, bounds.left)
+          top = Math.max(top, bounds.top)
+          right = Math.min(right, bounds.right)
+          bottom = Math.min(bottom, bounds.bottom)
+        } else {
+          left = Math.max(left, 0)
+          top = Math.max(top, 0)
+          right = Math.min(right, window.innerWidth || 0)
+          bottom = Math.min(bottom, window.innerHeight || 0)
+        }
+        if (right - left <= 0 || bottom - top <= 0) {
+          layer.style.display = 'none'
+        } else {
+          layer.style.display = 'block'
+          layer.style.left = left + 'px'
+          layer.style.top = top + 'px'
+          layer.style.width = right - left + 'px'
+          layer.style.height = bottom - top + 'px'
+        }
+        if (Date.now() - started >= 2300) {
+          remove()
+          return
+        }
+        frame = window.requestAnimationFrame(place)
+      }
+      place()
     }
 
     function scrollToTurnDom(turn) {
       return new Promise(function (resolve) {
         const deadline = Date.now() + 4000
         const attempt = function () {
-          const row = typeof turn === 'number' && Number.isFinite(turn) ? findTurnRow(turn) : null
+          const row = typeof turn === 'number' && Number.isFinite(turn) ? userRowOfTurn(turn) : null
           if (row) {
             try {
-              row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+              const scroller = row.closest('[data-conversation-scroll]')
+              if (scroller) {
+                const rowRect = row.getBoundingClientRect()
+                const bounds = scroller.getBoundingClientRect()
+                const top = scroller.scrollTop + (rowRect.top - bounds.top) - 16
+                scroller.scrollTop = Math.max(0, top)
+              } else {
+                row.scrollIntoView({ block: 'start' })
+              }
             } catch (error) {
               try {
-                row.scrollIntoView()
+                row.scrollIntoView({ block: 'start' })
               } catch (ignored) {
                 /* ignore */
               }
             }
+            window.setTimeout(function () {
+              flashTurnRow(turn)
+            }, 120)
             resolve(true)
             return
           }
@@ -1008,6 +1366,13 @@ window.__ModuleLoader__.load({
         const [filterText, setFilterText] = React.useState(function () {
           return formatFilterText(readFilterPatterns())
         })
+        const [findOpen, setFindOpen] = React.useState(false)
+        const [findQuery, setFindQuery] = React.useState('')
+        const [findScope, setFindScope] = React.useState('all')
+        const [findIndex, setFindIndex] = React.useState(0)
+        const [findFocusToken, setFindFocusToken] = React.useState(0)
+        const [activeTurn, setActiveTurn] = React.useState(undefined)
+        const findInputRef = React.useRef(null)
         const compiledFilters = React.useMemo(
           function () {
             return compileFilters(parseFilterText(filterText))
@@ -1169,6 +1534,124 @@ window.__ModuleLoader__.load({
           const node = event.currentTarget
           historyPinnedRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 24
         }, [])
+
+        const hits = React.useMemo(
+          function () {
+            return findHitsFor(turns, findQuery, findScope)
+          },
+          [turns, findQuery, findScope],
+        )
+        const findTotal = hits.length
+        const findPosition = findTotal === 0 ? 0 : Math.min(findIndex, findTotal - 1) + 1
+        const listTurns = findOpen ? turns : visibleTurns
+
+        React.useEffect(
+          function () {
+            setFindIndex(0)
+          },
+          [findQuery, findScope],
+        )
+
+        const openFinder = React.useCallback(function () {
+          setMode('history')
+          writeMode('history')
+          setFindOpen(true)
+          setFindFocusToken(function (previous) {
+            return previous + 1
+          })
+        }, [])
+
+        React.useEffect(
+          function () {
+            finderHooks.add(openFinder)
+            return function () {
+              finderHooks.delete(openFinder)
+            }
+          },
+          [openFinder],
+        )
+
+        React.useEffect(
+          function () {
+            if (!findOpen) return undefined
+            const node = findInputRef.current
+            if (node && typeof node.focus === 'function') {
+              node.focus()
+              if (typeof node.select === 'function') node.select()
+            }
+            return undefined
+          },
+          [findOpen, findFocusToken],
+        )
+
+        React.useEffect(
+          function () {
+            if (mode !== 'history') return undefined
+            let frame
+            const update = function () {
+              if (frame !== undefined) return
+              frame = window.requestAnimationFrame(function () {
+                frame = undefined
+                setActiveTurn(currentVisibleTurn())
+              })
+            }
+            update()
+            document.addEventListener('scroll', update, true)
+            window.addEventListener('resize', update)
+            return function () {
+              document.removeEventListener('scroll', update, true)
+              window.removeEventListener('resize', update)
+              if (frame !== undefined) window.cancelAnimationFrame(frame)
+            }
+          },
+          [mode, sessionId, visibleTurns.length],
+        )
+
+        React.useEffect(
+          function () {
+            if (!findOpen || findQuery.trim() === '' || hits.length === 0) return
+            jumpToTurn(hits[Math.min(findIndex, hits.length - 1)])
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+          },
+          [findOpen, findQuery, findScope, findIndex],
+        )
+
+        const closeFinder = React.useCallback(function () {
+          setFindOpen(false)
+        }, [])
+
+        const gotoNextHit = React.useCallback(
+          function () {
+            if (hits.length === 0) return
+            setFindIndex(function (previous) {
+              return (previous + 1) % hits.length
+            })
+          },
+          [hits.length],
+        )
+
+        const gotoPrevHit = React.useCallback(
+          function () {
+            if (hits.length === 0) return
+            setFindIndex(function (previous) {
+              return (previous - 1 + hits.length) % hits.length
+            })
+          },
+          [hits.length],
+        )
+
+        const onFindKeyDown = function (event) {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            closeFinder()
+            return
+          }
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            if (event.shiftKey) gotoPrevHit()
+            else gotoNextHit()
+          }
+        }
 
         const branchRows = React.useMemo(
           function () {
@@ -1452,6 +1935,83 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'dsh-sh-pane' },
+            findOpen
+              ? h(
+                  'div',
+                  { className: 'dsh-sh-find' },
+                  h('input', {
+                    ref: findInputRef,
+                    className: 'dsh-sh-findInput',
+                    type: 'text',
+                    value: findQuery,
+                    placeholder: t('findPlaceholder'),
+                    spellCheck: false,
+                    autoComplete: 'off',
+                    onChange: function (event) {
+                      setFindQuery(event.target.value)
+                    },
+                    onKeyDown: onFindKeyDown,
+                  }),
+                  h(
+                    'span',
+                    { className: 'dsh-sh-findCount' },
+                    findTotal === 0 ? t('findNoResults') : findPosition + '/' + findTotal,
+                  ),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dsh-sh-findButton',
+                      title: t('findPrev'),
+                      onClick: gotoPrevHit,
+                    },
+                    '↑',
+                  ),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dsh-sh-findButton',
+                      title: t('findNext'),
+                      onClick: gotoNextHit,
+                    },
+                    '↓',
+                  ),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dsh-sh-findButton',
+                      title: t('findClose'),
+                      onClick: closeFinder,
+                    },
+                    '×',
+                  ),
+                )
+              : null,
+            findOpen
+              ? h(
+                  'div',
+                  { className: 'dsh-sh-findScopes' },
+                  FIND_SCOPES.map(function (scope) {
+                    const scopeLabel =
+                      scope === 'ai' ? t('findScopeAi') : scope === 'user' ? t('findScopeUser') : t('findScopeAll')
+                    const isActive = findScope === scope
+                    return h(
+                      'button',
+                      {
+                        type: 'button',
+                        key: scope,
+                        className: 'dsh-sh-findScope' + (isActive ? ' dsh-sh-findScopeActive' : ''),
+                        onClick: function () {
+                          setFindScope(scope)
+                        },
+                      },
+                      scopeLabel,
+                    )
+                  }),
+                )
+              : null,
             h(
               'div',
               { className: 'dsh-sh-filter' },
@@ -1482,17 +2042,18 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'dsh-sh-list', ref: historyListRef, onScroll: onHistoryScroll },
-              visibleTurns.length === 0
+              listTurns.length === 0
                 ? h('div', { className: 'dsh-sh-empty' }, t('emptyHistory'))
-                : visibleTurns.map(function (item) {
+                : listTurns.map(function (item) {
                     const prompt = typeof item.prompt === 'string' ? item.prompt : ''
                     const response = typeof item.response === 'string' ? item.response : ''
+                    const isCurrent = typeof activeTurn === 'number' && activeTurn === item.turn
                     return h(
                       'button',
                       {
                         type: 'button',
                         key: item.turn,
-                        className: 'dsh-sh-row',
+                        className: 'dsh-sh-row' + (isCurrent ? ' dsh-sh-rowCurrent' : ''),
                         title: [prompt, response].filter(Boolean).join('\n'),
                         onClick: function () {
                           jumpToTurn(item)
@@ -1502,9 +2063,21 @@ window.__ModuleLoader__.load({
                         'span',
                         { className: 'dsh-sh-rowHead' },
                         h('span', { className: 'dsh-sh-turn' }, '#' + String(item.turn + 1)),
-                        h('span', { className: 'dsh-sh-prompt' }, prompt || t('noText')),
+                        h(
+                          'span',
+                          { className: 'dsh-sh-prompt' },
+                          findOpen && findQuery.trim() !== ''
+                            ? highlightText(prompt || t('noText'), findQuery)
+                            : prompt || t('noText'),
+                        ),
                       ),
-                      response ? h('span', { className: 'dsh-sh-response' }, response) : null,
+                      response
+                        ? h(
+                            'span',
+                            { className: 'dsh-sh-response' },
+                            findOpen && findQuery.trim() !== '' ? highlightText(response, findQuery) : response,
+                          )
+                        : null,
                     )
                   }),
             ),
@@ -1534,6 +2107,23 @@ window.__ModuleLoader__.load({
         const records = createRecordStore()
         const pins = createPinStore()
         const order = createOrderStore()
+
+        ctx.effect(
+          function () {
+            const onKeyDown = function (event) {
+              if (!(event.ctrlKey || event.metaKey)) return
+              if (event.shiftKey || event.altKey) return
+              if (typeof event.key !== 'string' || event.key.toLowerCase() !== 'f') return
+              event.preventDefault()
+              requestFinder(ctx)
+            }
+            document.addEventListener('keydown', onKeyDown, true)
+            return function () {
+              document.removeEventListener('keydown', onKeyDown, true)
+            }
+          },
+          'dsh-session-history: ctrl+f finder',
+        )
 
         ctx.effect(
           function () {
