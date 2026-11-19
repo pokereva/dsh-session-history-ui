@@ -2,6 +2,14 @@
 
 在 DeepSeek Harness 右侧栏里查看当前会话的聊天记录、一键跳转，并浏览所有会话之间的分支关系。
 
+## 截图
+
+| 历史记录 | 展示分支 |
+| --- | --- |
+| <img src="https://raw.githubusercontent.com/pokereva/dsh-session-history-ui/main/assets/screenshot-history.png" width="380" alt="历史记录：轮次列表、过滤条件、已过滤计数与通配符说明" /> | <img src="https://raw.githubusercontent.com/pokereva/dsh-session-history-ui/main/assets/screenshot-branches.png" width="380" alt="展示分支：分支树、置顶、运行/完成状态、推断关系与已归档会话" /> |
+
+> 截图使用示例会话数据渲染（面板与线上一致），不包含任何真实聊天内容。
+
 ## 功能
 
 - **历史记录**：按轮次列出当前会话的用户消息与 AI 回复摘要。点击任意一条，会话窗口会跳到对应位置；如果该轮次尚未加载，会先通过 `session.loadThrough(seq)` 把历史翻到目标轮次，再滚动定位。
