@@ -15,7 +15,18 @@ window.__ModuleLoader__.load({
     const ORDER_KEY = 'dsh.session-history.order.v1'
     const SHOW_ARCHIVED_KEY = 'dsh.session-history.showArchived.v1'
     const MAX_RECORDS = 500
+    const DEDUPE_KEY = 'dsh.session-history.dedupe.v1'
+    const HIDE_AUTOMATION_KEY = 'dsh.session-history.hideScheduled.v1'
+    const TURN_MENU_KIND = 'sessionHistoryTurn'
     const MAX_PINS = 200
+    const NO_REVISION = function () {
+      return 0
+    }
+
+    function NO_SUBSCRIBE() {
+      return function () {}
+    }
+
     let panelMenuSessionId = null
     let panelMenuExpiresAt = 0
     let pendingArchivedOpen = null
@@ -178,6 +189,23 @@ window.__ModuleLoader__.load({
       unpinSession: '取消置顶',
       pinnedBadge: '置顶',
       jumpFailed: '无法跳转到这条记录',
+      jumpTimeout: '聊天窗口还没加载到这一轮，请稍后再点一次',
+      menuForkBefore: '此轮之前分支',
+      menuForkHere: '本轮分支',
+      menuCopy: '复制',
+      menuCopyAll: '复制整轮（提示词 + 回复）',
+      menuCopyPrompt: '复制用户提示词',
+      menuCopyResponse: '复制 AI 回复',
+      menuHide: '隐藏这一轮（加入过滤）',
+      copied: '已复制',
+      copyFailed: '复制失败',
+      forkFailed: '分支失败',
+      dedupe: '过滤重复',
+      dedupeHint: '相同提示词只保留最后一轮',
+      automationFilter: '过滤定时任务',
+      automationHint: '隐藏由定时任务自动触发的轮次',
+      automatedTurn: '自动化任务 {time}',
+      automatedTask: '自动化任务',
       openFailed: '无法打开这个会话',
       findPlaceholder: '在会话历史中查找',
       findPrev: '上一个匹配',
@@ -218,6 +246,23 @@ window.__ModuleLoader__.load({
       unpinSession: 'Unpin session',
       pinnedBadge: 'Pinned',
       jumpFailed: 'Could not jump to this turn',
+      jumpTimeout: 'The chat has not loaded this turn yet — try again in a moment',
+      menuForkBefore: 'Branch before this turn',
+      menuForkHere: 'Branch at this turn',
+      menuCopy: 'Copy',
+      menuCopyAll: 'Copy the whole turn (prompt + reply)',
+      menuCopyPrompt: 'Copy the prompt',
+      menuCopyResponse: 'Copy the AI reply',
+      menuHide: 'Hide this turn (add to filter)',
+      copied: 'Copied',
+      copyFailed: 'Copy failed',
+      forkFailed: 'Could not branch',
+      dedupe: 'Hide repeats',
+      dedupeHint: 'Keep only the last turn for repeated prompts',
+      automationFilter: 'Hide scheduled turns',
+      automationHint: 'Hide turns triggered automatically by scheduled tasks',
+      automatedTurn: 'Scheduled task {time}',
+      automatedTask: 'Scheduled task',
       openFailed: 'Could not open this session',
       findPlaceholder: 'Find in session history',
       findPrev: 'Previous match',
@@ -402,7 +447,17 @@ window.__ModuleLoader__.load({
   padding: 6px 8px;
 }
 .dsh-sh-sessionDragging {
-  opacity: 0.45;
+  opacity: .45;
+}
+.dsh-sh-guide {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--dsw-alias-label-tertiary);
+  margin-right: 4px;
+  user-select: none;
 }
 .dsh-sh-sessionDropBefore::before,
 .dsh-sh-sessionDropAfter::after {
@@ -481,8 +536,56 @@ window.__ModuleLoader__.load({
   border-radius: 50%;
   background: var(--dsw-alias-state-success-primary);
 }
-.dsh-sh-dotRunning {
-  background: var(--dsw-alias-state-business-primary);
+.dsh-sh-spinner {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-tertiary);
+}
+.dsh-sh-spinnerMotion {
+  transform-origin: center;
+  animation: dsh-sh-spinner-spin 1.5s linear infinite;
+}
+.dsh-sh-spinnerTrack,
+.dsh-sh-spinnerArc {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.dsh-sh-spinnerTrack {
+  opacity: 0.25;
+}
+.dsh-sh-spinnerArc {
+  stroke-dasharray: 12 150;
+  animation: dsh-sh-spinner-dash 1.5s ease-in-out infinite;
+}
+@keyframes dsh-sh-spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes dsh-sh-spinner-dash {
+  0% {
+    stroke-dasharray: 12 150;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dasharray: 24 150;
+    stroke-dashoffset: -6;
+  }
+  to {
+    stroke-dasharray: 12 150;
+    stroke-dashoffset: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dsh-sh-spinnerMotion,
+  .dsh-sh-spinnerArc {
+    animation: none;
+  }
+  .dsh-sh-spinnerArc {
+    stroke-dasharray: 18 150;
+    stroke-dashoffset: -3;
+  }
 }
 .dsh-sh-dotDone {
   background: var(--dsw-alias-state-success-primary);
@@ -511,6 +614,21 @@ window.__ModuleLoader__.load({
   font-size: 11px;
   line-height: 1.5;
 }
+.dsh-sh-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 4px 8px 0;
+}
+.dsh-sh-dedupe {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+}
 .dsh-sh-empty {
   margin: auto;
   padding: 24px 16px;
@@ -532,7 +650,7 @@ window.__ModuleLoader__.load({
   border: 2px solid rgba(77, 107, 254, 0.9);
   background: rgba(77, 107, 254, 0.26);
   box-shadow: 0 0 26px 6px rgba(77, 107, 254, 0.38), inset 0 0 22px rgba(77, 107, 254, 0.28);
-  animation: dsh-sh-flash-fade 2.2s ease-out forwards;
+  animation: dsh-sh-flash-fade 0.5s ease-out forwards;
 }
 @keyframes dsh-sh-flash-fade {
   0% {
@@ -630,6 +748,30 @@ window.__ModuleLoader__.load({
   color: inherit;
 }
 `
+
+    /**
+     * Mirrors the workspace session row's "ongoing" spinner: a rotating SVG
+     * ring with a breathing arc, used while the model is actually working.
+     */
+    function SpinnerGlyph() {
+      return h(
+        'svg',
+        {
+          className: 'dsh-sh-spinner',
+          width: 14,
+          height: 14,
+          viewBox: '0 0 24 24',
+          'aria-hidden': 'true',
+          'data-state': 'ongoing',
+        },
+        h(
+          'g',
+          { className: 'dsh-sh-spinnerMotion' },
+          h('circle', { className: 'dsh-sh-spinnerTrack', cx: 12, cy: 12, r: 9.5 }),
+          h('circle', { className: 'dsh-sh-spinnerArc', cx: 12, cy: 12, r: 9.5 }),
+        ),
+      )
+    }
 
     function HistoryGlyph(props) {
       const size = props && typeof props.size === 'number' ? props.size : 24
@@ -783,6 +925,244 @@ window.__ModuleLoader__.load({
         if (regexp.test(text)) return true
       }
       return false
+    }
+
+    function readDedupe() {
+      return readJson(DEDUPE_KEY, false) === true
+    }
+
+    function writeDedupe(value) {
+      writeJson(DEDUPE_KEY, value === true)
+    }
+
+    function readHideAutomation() {
+      return readJson(HIDE_AUTOMATION_KEY, false) === true
+    }
+
+    function writeHideAutomation(value) {
+      writeJson(HIDE_AUTOMATION_KEY, value === true)
+    }
+
+    function formatClock(time) {
+      const date = new Date(time)
+      if (isNaN(date.getTime())) return ''
+      const hh = String(date.getHours()).padStart(2, '0')
+      const mm = String(date.getMinutes()).padStart(2, '0')
+      return hh + ':' + mm
+    }
+
+    function automatedTurnLabel(time, t) {
+      const clock = typeof time === 'number' && isFinite(time) ? formatClock(time) : ''
+      return clock === '' ? t('automatedTask') : t('automatedTurn').replace('{time}', clock)
+    }
+
+    function eventsOfBinding(binding) {
+      const events = []
+      if (!binding || !binding.eventSource) return events
+      let snapshot = null
+      try {
+        snapshot = binding.eventSource.getSnapshot()
+      } catch (error) {
+        return events
+      }
+      const entries = snapshot && Array.isArray(snapshot.entries) ? snapshot.entries : []
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index]
+        if (entry && entry.type === 'event' && entry.event) events.push(entry.event)
+      }
+      return events
+    }
+
+    function textFromContent(content) {
+      if (typeof content === 'string') return content
+      if (!Array.isArray(content)) return ''
+      const parts = []
+      for (let index = 0; index < content.length; index += 1) {
+        const block = content[index]
+        if (block && block.type === 'text' && typeof block.text === 'string') parts.push(block.text)
+      }
+      return parts.join('\n')
+    }
+
+    /** Full text of one turn, read from the Session event window. */
+    function turnMessagesFromEvents(events, turn) {
+      const result = { found: false, prompt: '', response: '', scheduled: false, time: null }
+      if (!Array.isArray(events) || typeof turn !== 'number') return result
+      const prompts = []
+      const responses = []
+      let inside = false
+      let entered = false
+      for (let index = 0; index < events.length; index += 1) {
+        const event = events[index]
+        if (!event || typeof event.type !== 'string') continue
+        if (event.type === 'turn/start') {
+          const data = event.data || {}
+          inside = data.turn === turn
+          if (inside && !entered) {
+            entered = true
+            result.found = true
+          }
+          continue
+        }
+        if (!inside) continue
+        if (event.type === 'turn/end') break
+        if (typeof event.time === 'number' && result.time === null) result.time = event.time
+        if (event.type === 'user/message') {
+          const data = event.data || {}
+          const text = textFromContent(data.content)
+          if (text !== '') prompts.push(text)
+          const source = data.source
+          if (source && typeof source.kind === 'string' && source.kind !== 'user') result.scheduled = true
+        } else if (event.type === 'assistant/message') {
+          const data = event.data || {}
+          const text = textFromContent(data.message ? data.message.content : null)
+          if (text !== '') responses.push(text)
+        }
+      }
+      result.prompt = prompts.join('\n\n')
+      result.response = responses.join('\n\n')
+      return result
+    }
+
+    function readTurnDetailSync(ctx, sessionId, turn) {
+      try {
+        const binding =
+          ctx.sessions && typeof ctx.sessions.binding === 'function' ? ctx.sessions.binding(sessionId) : null
+        if (!binding) return null
+        return turnMessagesFromEvents(eventsOfBinding(binding), turn)
+      } catch (error) {
+        return null
+      }
+    }
+
+    async function collectTurnDetail(ctx, sessionId, turn, seq) {
+      if (typeof turn !== 'number') return null
+      let binding = null
+      try {
+        binding =
+          ctx.sessions && typeof ctx.sessions.binding === 'function' ? ctx.sessions.binding(sessionId) : null
+      } catch (error) {
+        binding = null
+      }
+      if (!binding) return null
+      let detail = turnMessagesFromEvents(eventsOfBinding(binding), turn)
+      if (
+        !detail.found &&
+        typeof seq === 'number' &&
+        binding.session &&
+        typeof binding.session.loadThrough === 'function'
+      ) {
+        try {
+          await binding.session.loadThrough(seq)
+        } catch (error) {
+          /* the window may not be loadable */
+        }
+        detail = turnMessagesFromEvents(eventsOfBinding(binding), turn)
+      }
+      return detail
+    }
+
+    async function copyTurnDetails(ctx, sessionId, value, kind, t) {
+      let detail = null
+      try {
+        detail = await collectTurnDetail(ctx, sessionId, value && value.turn, value && value.seq)
+      } catch (error) {
+        detail = null
+      }
+      const preview = value || {}
+      const prompt = detail && detail.found ? detail.prompt : typeof preview.prompt === 'string' ? preview.prompt : ''
+      const response =
+        detail && detail.found ? detail.response : typeof preview.response === 'string' ? preview.response : ''
+      try {
+        await copyText(turnCopyText({ turn: preview.turn, prompt: prompt, response: response }, kind))
+        notifyPanel(ctx, t('copied'), true)
+      } catch (error) {
+        notifyPanel(ctx, t('copyFailed'), false)
+      }
+    }
+
+    function normalizedPrompt(prompt) {
+      return typeof prompt === 'string' ? prompt.trim().replace(/\s+/gu, ' ') : ''
+    }
+
+    /** Keep only the last turn of every repeated user prompt. */
+    function dedupeTurns(turns) {
+      const seen = new Set()
+      const kept = []
+      for (let index = turns.length - 1; index >= 0; index -= 1) {
+        const item = turns[index]
+        const text = normalizedPrompt(item && item.prompt)
+        if (text === '') {
+          kept.push(item)
+          continue
+        }
+        if (seen.has(text)) continue
+        seen.add(text)
+        kept.push(item)
+      }
+      return kept.reverse()
+    }
+
+    function nextTurnSeqAfter(turns, turn) {
+      for (let index = 0; index < turns.length; index += 1) {
+        if (turns[index].turn === turn) {
+          const next = turns[index + 1]
+          return next && typeof next.seq === 'number' ? next.seq : null
+        }
+      }
+      return null
+    }
+
+    function copyText(text) {
+      const value = String(text === undefined || text === null ? '' : text)
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        return navigator.clipboard.writeText(value)
+      }
+      return new Promise(function (resolve, reject) {
+        try {
+          const area = document.createElement('textarea')
+          area.value = value
+          area.style.position = 'fixed'
+          area.style.opacity = '0'
+          document.body.appendChild(area)
+          area.select()
+          const ok = typeof document.execCommand === 'function' && document.execCommand('copy')
+          document.body.removeChild(area)
+          if (ok) resolve()
+          else reject(new Error('copy failed'))
+        } catch (error) {
+          reject(error)
+        }
+      })
+    }
+
+    function turnCopyText(value, kind) {
+      const prompt = typeof value.prompt === 'string' ? value.prompt : ''
+      const response = typeof value.response === 'string' ? value.response : ''
+      if (kind === 'prompt') return prompt
+      if (kind === 'response') return response
+      const number = typeof value.turn === 'number' ? value.turn + 1 : ''
+      return '# 第 ' + String(number) + ' 轮\n\n**我**\n\n' + (prompt || '（无文本）') + '\n\n**AI**\n\n' + (response || '（无文本）')
+    }
+
+    let hideTurnHandler = null
+
+    function requestHideTurn(prompt) {
+      if (hideTurnHandler !== null) hideTurnHandler(prompt)
+    }
+
+    async function forkTurnAt(ctx, sessionId, atSeq, t) {
+      try {
+        const request = { sessionId: sessionId, increaseTitle: true }
+        if (typeof atSeq === 'number' && atSeq >= 0) request.atSeq = atSeq
+        const childId = await ctx.sessions.fork(request)
+        if (childId) {
+          ctx.uiWorkspace.openSession(childId)
+          openTabInSession(ctx, childId)
+        }
+      } catch (error) {
+        notifyPanel(ctx, t('forkFailed'), false)
+      }
     }
 
     function titleOfSession(service, sessionId) {
@@ -1010,9 +1390,14 @@ window.__ModuleLoader__.load({
       const started = Date.now()
       let frame
       let removed = false
+      // rAF stops in hidden windows, so a plain timer guarantees cleanup.
+      const safety = window.setTimeout(function () {
+        remove()
+      }, 700)
       const remove = function () {
         if (removed) return
         removed = true
+        window.clearTimeout(safety)
         if (frame !== undefined) window.cancelAnimationFrame(frame)
         try {
           if (layer.parentNode) layer.parentNode.removeChild(layer)
@@ -1052,7 +1437,7 @@ window.__ModuleLoader__.load({
           layer.style.width = right - left + 'px'
           layer.style.height = bottom - top + 'px'
         }
-        if (Date.now() - started >= 2300) {
+        if (Date.now() - started >= 520) {
           remove()
           return
         }
@@ -1061,42 +1446,201 @@ window.__ModuleLoader__.load({
       place()
     }
 
+    /** Align the human message row of a turn with the top of the chat viewport. */
+    /**
+     * DSH's chat keeps a programmatic scroll pinned to the tail while the
+     * reader still follows it: the reading controller sees a scroll without
+     * "moved by reader" evidence and calls followTail() again, which puts the
+     * viewport back at the bottom. A synthetic wheel on the scrollport runs
+     * through the chat's reading-intent listener (READING_INTENTS in
+     * use-chat-viewport), interrupting tail following exactly like a real
+     * wheel; after that our scrollTop assignment sticks. The marker lets this
+     * plugin's own takeover listeners ignore the synthetic event.
+     */
+    function releaseChatFollow(scroller) {
+      if (!scroller) return
+      try {
+        let event
+        if (typeof WheelEvent === 'function') {
+          event = new WheelEvent('wheel', { bubbles: false, cancelable: false, deltaY: 0 })
+        } else if (typeof Event === 'function') {
+          event = new Event('wheel', { bubbles: false, cancelable: false })
+        } else {
+          return
+        }
+        event.__dshSessionHistorySynthetic = true
+        scroller.dispatchEvent(event)
+      } catch (error) {
+        /* interrupting the tail follow is best effort */
+      }
+    }
+
+    function alignTurnRow(turn) {
+      const row = typeof turn === 'number' && Number.isFinite(turn) ? userRowOfTurn(turn) : null
+      if (!row) return false
+      try {
+        const scroller = row.closest('[data-conversation-scroll]')
+        if (scroller) {
+          const rowRect = row.getBoundingClientRect()
+          const bounds = scroller.getBoundingClientRect()
+          const top = scroller.scrollTop + (rowRect.top - bounds.top) - 16
+          const next = Math.max(0, top)
+          if (Math.abs(next - scroller.scrollTop) > 0.5) {
+            releaseChatFollow(scroller)
+            scroller.scrollTop = next
+          }
+        } else {
+          row.scrollIntoView({ block: 'start' })
+        }
+        return true
+      } catch (error) {
+        try {
+          row.scrollIntoView({ block: 'start' })
+          return true
+        } catch (ignored) {
+          return false
+        }
+      }
+    }
+
+    /**
+     * Scroll the chat to one turn and pulse the target bubble.
+     *
+     * The chat re-renders while older history pages in, and its scroll anchor
+     * may move the viewport back after our first assignment, so the alignment
+     * is re-applied a few times after the row appears. If the row never shows
+     * up the promise resolves false so the caller can tell the user.
+     */
+    let jumpRequest = 0
+
+    /**
+     * Scroll the main chat so that the requested turn's user prompt sits at the
+     * top of the viewport. The chat keeps its own reading policy: while it is
+     * following the tail (bottom-pinned) it re-lands at the bottom on any
+     * content or layout change, which would silently undo a single scrollTop
+     * write. Two mechanisms keep the jump honest:
+     *  - a synthetic wheel through the chat's reading-intent listener releases
+     *    the tail follow (the same signal a real wheel sends);
+     *  - after the first landing the target is re-checked on every scroll
+     *    event, so if the chat re-pins anyway (streaming, history paging) the
+     *    row is put back. This guard stops as soon as the user scrolls, so a
+     *    later reader gesture always wins.
+     * Row polling covers turns whose rows are not mounted yet; the request
+     * gives up after the deadline and the caller shows a notice.
+     */
     function scrollToTurnDom(turn) {
+      const requestId = ++jumpRequest
       return new Promise(function (resolve) {
-        const deadline = Date.now() + 4000
-        const attempt = function () {
-          const row = typeof turn === 'number' && Number.isFinite(turn) ? userRowOfTurn(turn) : null
-          if (row) {
+        const deadline = Date.now() + 12000
+        let settledAt = null
+        let cancelled = false
+        let frame = null
+        let timer = null
+        let scroller = null
+        const listens = []
+
+        const stop = function () {
+          if (cancelled) return
+          cancelled = true
+          if (frame !== null) {
+            window.cancelAnimationFrame(frame)
+            frame = null
+          }
+          if (timer !== null) {
+            window.clearTimeout(timer)
+            timer = null
+          }
+          for (let index = 0; index < listens.length; index += 1) {
+            const entry = listens[index]
             try {
-              const scroller = row.closest('[data-conversation-scroll]')
-              if (scroller) {
-                const rowRect = row.getBoundingClientRect()
-                const bounds = scroller.getBoundingClientRect()
-                const top = scroller.scrollTop + (rowRect.top - bounds.top) - 16
-                scroller.scrollTop = Math.max(0, top)
-              } else {
-                row.scrollIntoView({ block: 'start' })
-              }
+              entry.target.removeEventListener(entry.type, entry.handler, entry.options)
             } catch (error) {
-              try {
-                row.scrollIntoView({ block: 'start' })
-              } catch (ignored) {
-                /* ignore */
-              }
+              /* the node may be gone with the chat */
             }
-            window.setTimeout(function () {
-              flashTurnRow(turn)
-            }, 120)
-            resolve(true)
+          }
+          listens.length = 0
+        }
+
+        const measure = function () {
+          const row = userRowOfTurn(turn)
+          if (!row) return null
+          const container = row.closest('[data-conversation-scroll]')
+          if (!container) return null
+          const rowRect = row.getBoundingClientRect()
+          const bounds = container.getBoundingClientRect()
+          return { row: row, scroller: container, delta: rowRect.top - bounds.top - 16 }
+        }
+
+        const align = function (info) {
+          if (!info || Math.abs(info.delta) <= 1) return
+          releaseChatFollow(info.scroller)
+          info.scroller.scrollTop = Math.max(0, info.scroller.scrollTop + info.delta)
+        }
+
+        const onUserGesture = function (event) {
+          if (event && event.__dshSessionHistorySynthetic) return
+          if (settledAt === null) return
+          stop()
+        }
+
+        const onScroll = function () {
+          if (cancelled || settledAt === null || frame !== null) return
+          frame = window.requestAnimationFrame(function () {
+            frame = null
+            if (cancelled || settledAt === null) return
+            align(measure())
+          })
+        }
+
+        const watch = function (container) {
+          if (scroller === container) return
+          scroller = container
+          const userOptions = { passive: true }
+          const entries = [
+            ['wheel', onUserGesture, userOptions],
+            ['touchstart', onUserGesture, userOptions],
+            ['keydown', onUserGesture],
+            ['mousedown', onUserGesture, userOptions],
+          ]
+          for (let index = 0; index < entries.length; index += 1) {
+            const name = entries[index][0]
+            const handler = entries[index][1]
+            const options = entries[index][2]
+            container.addEventListener(name, handler, options)
+            listens.push({ target: container, type: name, handler: handler, options: options })
+          }
+          const scrollOptions = { passive: true }
+          container.addEventListener('scroll', onScroll, scrollOptions)
+          listens.push({ target: container, type: 'scroll', handler: onScroll, options: scrollOptions })
+        }
+
+        const cycle = function () {
+          timer = null
+          if (cancelled || requestId !== jumpRequest) return
+          frame = null
+          const info = measure()
+          if (info) {
+            watch(info.scroller)
+            align(info)
+            if (settledAt === null) {
+              settledAt = Date.now()
+              window.setTimeout(function () {
+                if (!cancelled) flashTurnRow(turn)
+              }, 120)
+              resolve(true)
+            }
+            if (Date.now() - settledAt < 4000) timer = window.setTimeout(cycle, 120)
             return
           }
           if (Date.now() > deadline) {
+            stop()
             resolve(false)
             return
           }
-          window.setTimeout(attempt, 80)
+          timer = window.setTimeout(cycle, 80)
         }
-        attempt()
+
+        cycle()
       })
     }
 
@@ -1323,15 +1867,38 @@ window.__ModuleLoader__.load({
       roots.sort(compareRows)
       const rows = []
       const visited = new Set()
-      const walk = function (id, depth) {
+      /**
+       * Draw the branch tree with box-drawing characters: every ancestor level
+       * contributes a vertical line (│) while it still has following siblings,
+       * and the row itself gets ├─ / └─ depending on its position.
+       */
+      const guideOf = function (lines, isLast) {
+        let text = ''
+        for (const more of lines) text += more ? '│  ' : '   '
+        return text + (isLast ? '└─' : '├─')
+      }
+      const walk = function (id, depth, lines, isLast) {
         if (visited.has(id)) return
         visited.add(id)
-        rows.push({ sessionId: id, depth: depth, parentId: parentOf.get(id), inferred: inferredOf.has(id) })
-        for (const childId of childrenByParent.get(id) || []) walk(childId, depth + 1)
+        rows.push({
+          sessionId: id,
+          depth: depth,
+          parentId: parentOf.get(id),
+          inferred: inferredOf.has(id),
+          guide: depth === 0 ? '' : guideOf(lines, isLast),
+        })
+        const children = (childrenByParent.get(id) || []).filter(function (childId) {
+          return !visited.has(childId)
+        })
+        for (let index = 0; index < children.length; index += 1) {
+          walk(children[index], depth + 1, depth === 0 ? [] : lines.concat([!isLast]), index === children.length - 1)
+        }
       }
-      for (const root of roots) walk(root, 0)
+      for (let index = 0; index < roots.length; index += 1) {
+        walk(roots[index], 0, [], index === roots.length - 1)
+      }
       for (const id of live) {
-        if (!visited.has(id)) rows.push({ sessionId: id, depth: 0 })
+        if (!visited.has(id)) rows.push({ sessionId: id, depth: 0, guide: '' })
       }
       return rows
     }
@@ -1366,6 +1933,8 @@ window.__ModuleLoader__.load({
         const [filterText, setFilterText] = React.useState(function () {
           return formatFilterText(readFilterPatterns())
         })
+        const [dedupe, setDedupe] = React.useState(readDedupe)
+        const [hideAutomation, setHideAutomation] = React.useState(readHideAutomation)
         const [findOpen, setFindOpen] = React.useState(false)
         const [findQuery, setFindQuery] = React.useState('')
         const [findScope, setFindScope] = React.useState('all')
@@ -1453,18 +2022,21 @@ window.__ModuleLoader__.load({
 
         const jumpToTurn = React.useCallback(
           function (item) {
+            if (!item || typeof item.turn !== 'number') return
             const binding = ctx.sessions.binding(sessionId)
             const session = binding && binding.session
-            const finish = function () {
-              if (item && typeof item.turn === 'number') scrollToTurnDom(item.turn)
+            const run = function () {
+              scrollToTurnDom(item.turn).then(function (ok) {
+                if (!ok) notifyPanel(ctx, t('jumpTimeout'), false)
+              })
             }
-            if (session && typeof session.loadThrough === 'function' && item && typeof item.seq === 'number') {
-              session.loadThrough(item.seq).then(finish, finish)
+            if (session && typeof session.loadThrough === 'function' && typeof item.seq === 'number') {
+              session.loadThrough(item.seq).then(run, run)
               return
             }
-            finish()
+            run()
           },
-          [sessionId],
+          [sessionId, t],
         )
 
         const openSession = React.useCallback(
@@ -1494,6 +2066,33 @@ window.__ModuleLoader__.load({
           changeFilter(formatFilterText(DEFAULT_FILTERS))
         }, [])
 
+        const toggleDedupe = React.useCallback(function (event) {
+          const next = !!(event && event.target && event.target.checked)
+          setDedupe(next)
+          writeDedupe(next)
+        }, [])
+
+        const toggleHideAutomation = React.useCallback(function (event) {
+          const next = !!(event && event.target && event.target.checked)
+          setHideAutomation(next)
+          writeHideAutomation(next)
+        }, [])
+
+        React.useEffect(function () {
+          hideTurnHandler = function (prompt) {
+            const text = typeof prompt === 'string' ? prompt : ''
+            if (text.trim() === '') return
+            const patterns = readFilterPatterns()
+            if (patterns.indexOf(text) !== -1) return
+            const next = patterns.concat([text])
+            writeFilterPatterns(next)
+            setFilterText(formatFilterText(next))
+          }
+          return function () {
+            hideTurnHandler = null
+          }
+        }, [])
+
         const turns = React.useMemo(
           function () {
             if (!Array.isArray(outlineResult)) return []
@@ -1507,13 +2106,72 @@ window.__ModuleLoader__.load({
           [outlineResult],
         )
 
+        const sessionBinding = React.useMemo(
+          function () {
+            try {
+              return ctx.sessions && typeof ctx.sessions.binding === 'function' ? ctx.sessions.binding(sessionId) : null
+            } catch (error) {
+              return null
+            }
+          },
+          [ctx, sessionId],
+        )
+
+        const eventSource = sessionBinding ? sessionBinding.eventSource : null
+        const eventRevision = React.useSyncExternalStore(
+          eventSource
+            ? function (listener) {
+                return eventSource.subscribe(listener)
+              }
+            : NO_SUBSCRIBE,
+          eventSource
+            ? function () {
+                return eventSource.getSnapshot().revision
+              }
+            : NO_REVISION,
+          eventSource
+            ? function () {
+                return eventSource.getSnapshot().revision
+              }
+            : NO_REVISION,
+        )
+
+        const turnInfo = React.useMemo(
+          function () {
+            const details = new Map()
+            if (!eventSource) return details
+            const candidates = turns.filter(function (item) {
+              return item.prompt === '' || item.prompt === null || item.prompt === undefined
+            })
+            if (candidates.length === 0) return details
+            const events = eventsOfBinding(sessionBinding)
+            for (let index = 0; index < candidates.length; index += 1) {
+              const item = candidates[index]
+              const detail = turnMessagesFromEvents(events, item.turn)
+              if (detail.found) details.set(item.turn, detail)
+            }
+            return details
+          },
+          [turns, sessionBinding, eventSource, eventRevision],
+        )
+
+        const dedupedTurns = React.useMemo(
+          function () {
+            return dedupe ? dedupeTurns(turns) : turns
+          },
+          [turns, dedupe],
+        )
+
         const visibleTurns = React.useMemo(
           function () {
-            return turns.filter(function (item) {
-              return !isFilteredPrompt(item.prompt, compiledFilters)
+            return dedupedTurns.filter(function (item) {
+              if (isFilteredPrompt(item.prompt, compiledFilters)) return false
+              if (!hideAutomation) return true
+              const info = turnInfo.get(item.turn)
+              return !(info && info.found && info.scheduled)
             })
           },
-          [turns, compiledFilters],
+          [dedupedTurns, compiledFilters, hideAutomation, turnInfo],
         )
         const hiddenTurns = turns.length - visibleTurns.length
         const historyListRef = React.useRef(null)
@@ -1820,7 +2478,7 @@ window.__ModuleLoader__.load({
                 'data-current': row.sessionId === sessionId ? 'true' : undefined,
                 'data-archived': archived ? 'true' : undefined,
                 draggable: !archived,
-                style: { paddingLeft: 8 + row.depth * 14 + 'px' },
+                style: { paddingLeft: 8 + 'px' },
                 title: archived ? t('archivedOpenHint') : parentHint || title,
                 onDragStart: archived
                   ? undefined
@@ -1868,7 +2526,8 @@ window.__ModuleLoader__.load({
               h(
                 'span',
                 { className: 'dsh-sh-sessionLine' },
-                running ? h('span', { className: 'dsh-sh-dot dsh-sh-dotRunning' }) : null,
+                row.guide ? h('span', { className: 'dsh-sh-guide', 'aria-hidden': 'true' }, row.guide) : null,
+                running ? h(SpinnerGlyph) : null,
                 !running && unread ? h('span', { className: 'dsh-sh-dot dsh-sh-dotDone' }) : null,
                 h(
                   'span',
@@ -1879,7 +2538,14 @@ window.__ModuleLoader__.load({
                 archived ? h('span', { className: 'dsh-sh-badge' }, t('archivedBadge')) : null,
                 row.sessionId === sessionId ? h('span', { className: 'dsh-sh-badge' }, t('current')) : null,
               ),
-              parentHint ? h('span', { className: 'dsh-sh-parent' }, parentHint) : null,
+              parentHint
+                ? h(
+                    'span',
+                    { className: 'dsh-sh-parent' },
+                    row.guide ? h('span', { className: 'dsh-sh-guide', 'aria-hidden': 'true' }, new Array(row.guide.length + 1).join(' ')) : null,
+                    parentHint,
+                  )
+                : null,
             )
           }
           const rows = branchRows.map(function (row) {
@@ -2041,12 +2707,45 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dsh-sh-filterMeta' }, t('filterWildcard')),
             h(
               'div',
+              { className: 'dsh-sh-toggles' },
+              h(
+                'label',
+                { className: 'dsh-sh-dedupe', title: t('dedupeHint') },
+                h('input', {
+                  type: 'checkbox',
+                  className: 'dsh-sh-archivedCheck',
+                  checked: dedupe,
+                  onChange: toggleDedupe,
+                }),
+                h('span', null, t('dedupe')),
+              ),
+              h(
+                'label',
+                { className: 'dsh-sh-dedupe', title: t('automationHint') },
+                h('input', {
+                  type: 'checkbox',
+                  className: 'dsh-sh-archivedCheck',
+                  checked: hideAutomation,
+                  onChange: toggleHideAutomation,
+                }),
+                h('span', null, t('automationFilter')),
+              ),
+            ),
+            h(
+              'div',
               { className: 'dsh-sh-list', ref: historyListRef, onScroll: onHistoryScroll },
               listTurns.length === 0
                 ? h('div', { className: 'dsh-sh-empty' }, t('emptyHistory'))
                 : listTurns.map(function (item) {
                     const prompt = typeof item.prompt === 'string' ? item.prompt : ''
                     const response = typeof item.response === 'string' ? item.response : ''
+                    const info = turnInfo.get(item.turn)
+                    const promptLabel =
+                      prompt !== ''
+                        ? prompt
+                        : info && info.found && info.scheduled
+                          ? automatedTurnLabel(info.time, t)
+                          : ''
                     const isCurrent = typeof activeTurn === 'number' && activeTurn === item.turn
                     return h(
                       'button',
@@ -2054,9 +2753,32 @@ window.__ModuleLoader__.load({
                         type: 'button',
                         key: item.turn,
                         className: 'dsh-sh-row' + (isCurrent ? ' dsh-sh-rowCurrent' : ''),
-                        title: [prompt, response].filter(Boolean).join('\n'),
+                        title: [promptLabel, response].filter(Boolean).join('\n'),
                         onClick: function () {
                           jumpToTurn(item)
+                        },
+                        onContextMenu: function (event) {
+                          if (!ctx.contextMenus || typeof ctx.contextMenus.open !== 'function') return
+                          event.preventDefault()
+                          event.stopPropagation()
+                          try {
+                            ctx.contextMenus.open(
+                              {
+                                kind: TURN_MENU_KIND,
+                                value: {
+                                  sessionId: sessionId,
+                                  turn: item.turn,
+                                  seq: item.seq,
+                                  nextSeq: nextTurnSeqAfter(turns, item.turn),
+                                  prompt: prompt,
+                                  response: response,
+                                },
+                              },
+                              { x: event.clientX, y: event.clientY },
+                            )
+                          } catch (error) {
+                            /* the shared menu may be unavailable */
+                          }
                         },
                       },
                       h(
@@ -2067,8 +2789,8 @@ window.__ModuleLoader__.load({
                           'span',
                           { className: 'dsh-sh-prompt' },
                           findOpen && findQuery.trim() !== ''
-                            ? highlightText(prompt || t('noText'), findQuery)
-                            : prompt || t('noText'),
+                            ? highlightText(promptLabel || t('noText'), findQuery)
+                            : promptLabel || t('noText'),
                         ),
                       ),
                       response
@@ -2448,6 +3170,95 @@ window.__ModuleLoader__.load({
             })
           },
           'dsh-session-history: pin menu',
+        )
+
+        ctx.effect(
+          function () {
+            if (!ctx.contextMenus || typeof ctx.contextMenus.register !== 'function') return
+            return ctx.contextMenus.register({
+              id: 'session.historyTurn',
+              target: TURN_MENU_KIND,
+              order: 10,
+              observe: function () {
+                return []
+              },
+              resolve: function (target) {
+                const value =
+                  target && typeof target.value === 'object' && target.value !== null
+                    ? target.value
+                    : target || {}
+                const sessionId = value.sessionId
+                const prompt = typeof value.prompt === 'string' ? value.prompt : ''
+                const response = typeof value.response === 'string' ? value.response : ''
+                const canForkBefore = typeof value.seq === 'number' && value.seq > 0
+                const atSeqForHere =
+                  typeof value.nextSeq === 'number' && value.nextSeq > 0 ? value.nextSeq - 1 : undefined
+                const copyTurn = function (kind) {
+                  copyTurnDetails(ctx, sessionId, value, kind, t)
+                }
+                const detail = readTurnDetailSync(ctx, sessionId, value.turn)
+                const isScheduled = !!(detail && detail.found && detail.scheduled)
+                const fullPrompt = detail && detail.found && detail.prompt !== '' ? detail.prompt : prompt
+                const fullResponse = detail && detail.found && detail.response !== '' ? detail.response : response
+                return [
+                  {
+                    id: 'forkBefore',
+                    label: t('menuForkBefore'),
+                    disabled: !canForkBefore,
+                    run: function () {
+                      forkTurnAt(ctx, sessionId, canForkBefore ? value.seq - 1 : undefined, t)
+                    },
+                  },
+                  {
+                    id: 'forkHere',
+                    label: t('menuForkHere'),
+                    run: function () {
+                      forkTurnAt(ctx, sessionId, atSeqForHere, t)
+                    },
+                  },
+                  {
+                    id: 'copy',
+                    label: t('menuCopy'),
+                    children: [
+                      {
+                        id: 'all',
+                        label: t('menuCopyAll'),
+                        run: function () {
+                          copyTurn('all')
+                        },
+                      },
+                      {
+                        id: 'prompt',
+                        label: t('menuCopyPrompt'),
+                        disabled: fullPrompt === '',
+                        run: function () {
+                          copyTurn('prompt')
+                        },
+                      },
+                      {
+                        id: 'response',
+                        label: t('menuCopyResponse'),
+                        disabled: fullResponse === '',
+                        run: function () {
+                          copyTurn('response')
+                        },
+                      },
+                    ],
+                  },
+                  {
+                    id: 'hide',
+                    label: t('menuHide'),
+                    separatorBefore: true,
+                    disabled: fullPrompt === '',
+                    run: function () {
+                      requestHideTurn(fullPrompt)
+                    },
+                  },
+                ]
+              },
+            })
+          },
+          'dsh-session-history: turn menu',
         )
 
         ctx.effect(
